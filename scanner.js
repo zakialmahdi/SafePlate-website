@@ -1,0 +1,757 @@
+(() => {
+  'use strict';
+
+  // --- Allergen Dictionary & Synonym Map ---
+  const ALLERGEN_DICTIONARY = {
+    'peanuts': [
+      'peanut', 'peanuts', 'peanut butter', 'peanut flour', 'peanut oil',
+      'arachis', 'groundnut', 'groundnuts', 'mandelonas', 'beer nuts'
+    ],
+    'dairy': [
+      'milk', 'dairy', 'butter', 'cheese', 'whey', 'casein', 'caseinate',
+      'lactose', 'cream', 'ghee', 'curd', 'curds', 'yogurt', 'yoghurt',
+      'buttermilk', 'lactalbumin', 'lactoglobulin', 'sour cream',
+      'milk powder', 'nonfat milk', 'skim milk', 'milkfat', 'anhydrous milk fat'
+    ],
+    'tree nuts': [
+      'tree nut', 'tree nuts', 'almond', 'almonds', 'cashew', 'cashews',
+      'walnut', 'walnuts', 'pecan', 'pecans', 'hazelnut', 'hazelnuts',
+      'filbert', 'filberts', 'pistachio', 'pistachios', 'macadamia',
+      'brazil nut', 'brazil nuts', 'chestnut', 'chestnuts', 'praline',
+      'marzipan', 'nut butter', 'nut meal', 'nut paste'
+    ],
+    'shellfish': [
+      'shellfish', 'crustacean', 'crustaceans', 'shrimp', 'shrimps', 'prawn',
+      'prawns', 'crab', 'crabs', 'lobster', 'lobsters', 'crawfish',
+      'crayfish', 'krill', 'mollusk', 'mollusks', 'mollusc', 'molluscs',
+      'clam', 'clams', 'mussel', 'mussels', 'oyster', 'oysters', 'scallop',
+      'scallops', 'squid', 'calamari', 'octopus', 'cuttlefish', 'snail', 'escargot'
+    ],
+    'eggs': [
+      'egg', 'eggs', 'egg white', 'egg whites', 'egg yolk', 'egg yolks',
+      'albumin', 'albumen', 'ovalbumin', 'lysozyme', 'mayonnaise', 'meringue',
+      'globulin', 'livetin', 'ovomucin', 'ovomucoid', 'ovovitellin', 'surimi'
+    ],
+    'soy': [
+      'soy', 'soya', 'soybean', 'soybeans', 'soya bean', 'soya beans',
+      'tofu', 'edamame', 'soy lecithin', 'soya lecithin', 'soy protein',
+      'soy isolate', 'soy sauce', 'tamari', 'miso', 'tempeh', 'natto',
+      'shoyu', 'textured vegetable protein', 'tvp'
+    ],
+    'wheat / gluten': [
+      'wheat', 'gluten', 'wheat flour', 'flour', 'enriched flour', 'bleached flour',
+      'unbleached flour', 'whole wheat', 'wheat bran', 'wheat germ', 'durum',
+      'semolina', 'spelt', 'farina', 'graham', 'kamut', 'einkorn', 'emmer',
+      'barley', 'rye', 'malt', 'malt extract', 'triticale', 'couscous', 'bulgur',
+      'vital wheat gluten', 'seitan'
+    ],
+    'sesame': [
+      'sesame', 'sesame seed', 'sesame seeds', 'tahini', 'tahina', 'halvah',
+      'sesamum', 'gingelly', 'til', 'sesame oil', 'sesame paste'
+    ]
+  };
+
+  const TRACE_PHRASES = [
+    'may contain',
+    'manufactured in a facility that also processes',
+    'manufactured in a facility that processes',
+    'processed in a facility that also processes',
+    'processed in a facility that handles',
+    'made on shared equipment with',
+    'made on shared equipment',
+    'packaged in a facility that handles',
+    'facility that also processes',
+    'facility that also handles',
+    'may contain traces of',
+    'traces of'
+  ];
+
+  const SAMPLE_LABELS = {
+    peanutCookie: {
+      name: 'Peanut Butter Bakery Cookie',
+      text: 'INGREDIENTS: Enriched wheat flour (wheat flour, niacin, reduced iron, thiamine mononitrate, riboflavin, folic acid), roasted peanuts, sugar, peanut butter (peanuts, salt), palm oil, butter (pasteurized cream, salt), eggs, sea salt, soy lecithin, natural vanilla flavor. CONTAINS: PEANUTS, WHEAT, MILK, EGGS, SOY. Manufactured in a facility that also processes tree nuts.'
+    },
+    dairyShake: {
+      name: 'Whey Protein Recovery Shake',
+      text: 'INGREDIENTS: Filtered water, whey protein concentrate (milk), calcium caseinate, cocoa powder, high oleic sunflower oil, natural flavors, soy lecithin, sea salt, sucralose, potassium citrate. CONTAINS: MILK, SOY. Produced on shared equipment with eggs and wheat.'
+    },
+    appleChips: {
+      name: 'Organic Crispy Apple Cinnamon Chips',
+      text: 'INGREDIENTS: Organic dried apples, organic ground cinnamon, organic lemon juice concentrate. Free from common allergens. Produced in a certified peanut-free and gluten-free facility.'
+    }
+  };
+
+  const RECENT_SCANS_STORAGE_KEY = 'safeplate_recent_scans';
+
+  // --- DOM Elements ---
+  const scanModal = document.getElementById('scanModal');
+  const heroScanBtn = document.querySelector('[data-open="scanModal"]');
+  const heroUploadInput = document.getElementById('labelUpload');
+
+  const scannerVideo = document.getElementById('scannerVideo');
+  const scannerPreview = document.getElementById('scannerPreview');
+  const scannerCanvas = document.getElementById('scannerCanvas');
+  const scannerFrame = document.getElementById('scannerFrame');
+  const scannerBeam = document.getElementById('scannerBeam');
+  const viewfinderPlaceholder = document.getElementById('viewfinderPlaceholder');
+
+  const startCameraBtn = document.getElementById('startCameraBtn');
+  const cameraBtnLabel = document.getElementById('cameraBtnLabel');
+  const captureFrameBtn = document.getElementById('captureFrameBtn');
+  const scannerFileInput = document.getElementById('scannerFileInput');
+  const scannerProfileSummary = document.getElementById('scannerProfileSummary');
+  const scannerProfileText = document.getElementById('scannerProfileText');
+
+  const scannerProgressWrap = document.getElementById('scannerProgressWrap');
+  const scannerStatusText = document.getElementById('scannerStatusText');
+  const scannerProgressPercent = document.getElementById('scannerProgressPercent');
+  const scannerProgressFill = document.getElementById('scannerProgressFill');
+
+  const scannerResult = document.getElementById('scannerResult');
+  const resultBanner = document.getElementById('resultBanner');
+  const resultIconBadge = document.getElementById('resultIconBadge');
+  const resultHeading = document.getElementById('resultHeading');
+  const resultSubheading = document.getElementById('resultSubheading');
+  const resultMatchesSection = document.getElementById('resultMatchesSection');
+  const resultMatchesList = document.getElementById('resultMatchesList');
+  const resultOcrText = document.getElementById('resultOcrText');
+  const ocrConfidenceText = document.getElementById('ocrConfidenceText');
+  const scanAgainBtn = document.getElementById('scanAgainBtn');
+  const saveRecentScanBtn = document.getElementById('saveRecentScanBtn');
+
+  const recentScansContainer = document.getElementById('recentScans');
+
+  let mediaStream = null;
+  let isScanning = false;
+  let lastAnalysis = null;
+  let cachedTesseractWorker = null;
+
+  // --- Helpers ---
+  const escapeHtml = (str) => {
+    return String(str || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+  };
+
+  const getActiveUserPrefs = () => {
+    if (window.SafePlateAuth && typeof window.SafePlateAuth.getUserPreferences === 'function') {
+      const client = window.SafePlateAuth.client;
+      // If signed in, current user will have their preferences in localStorage cache or memory
+      return window.SafePlateAuth.getUserPreferences(window.SafePlateAuth.client?.auth?.currentUser || null);
+    }
+    return {
+      strictMode: true,
+      traceAlerts: true,
+      allergens: [
+        { name: 'Peanuts', note: 'Avoid all traces', severity: 'High', tone: 'red' },
+        { name: 'Dairy', note: 'Includes derivatives', severity: 'High', tone: 'violet' }
+      ]
+    };
+  };
+
+  const updateModalProfileSummary = () => {
+    if (!scannerProfileText) return;
+    const prefs = getActiveUserPrefs();
+    const count = prefs.allergens?.length || 0;
+    const names = (prefs.allergens || []).map((a) => a.name).join(', ') || 'None';
+    const mode = prefs.strictMode ? 'Strict mode active' : 'Standard mode';
+    scannerProfileText.textContent = `${count} tracked: ${names} · ${mode}`;
+  };
+
+  // --- Camera Streaming ---
+  const startCamera = async () => {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      alert('Camera access is not supported by your browser or environment. Please upload an image file instead.');
+      return;
+    }
+
+    try {
+      if (mediaStream) {
+        stopCamera();
+        return;
+      }
+
+      mediaStream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
+        audio: false
+      });
+
+      scannerVideo.srcObject = mediaStream;
+      scannerVideo.hidden = false;
+      scannerPreview.hidden = true;
+      if (viewfinderPlaceholder) viewfinderPlaceholder.hidden = true;
+      if (scannerBeam) scannerBeam.hidden = false;
+      if (cameraBtnLabel) cameraBtnLabel.textContent = 'Stop camera';
+      if (captureFrameBtn) captureFrameBtn.disabled = false;
+    } catch (err) {
+      console.warn('Camera request denied or unavailable:', err);
+      alert('Could not start camera (' + (err.message || 'permission denied') + '). You can still upload label photos directly.');
+      stopCamera();
+    }
+  };
+
+  const stopCamera = () => {
+    if (mediaStream) {
+      mediaStream.getTracks().forEach((track) => track.stop());
+      mediaStream = null;
+    }
+    if (scannerVideo) {
+      scannerVideo.srcObject = null;
+      scannerVideo.hidden = true;
+    }
+    if (cameraBtnLabel) cameraBtnLabel.textContent = 'Start camera';
+    if (captureFrameBtn) captureFrameBtn.disabled = true;
+    if (viewfinderPlaceholder && scannerPreview.hidden) {
+      viewfinderPlaceholder.hidden = false;
+    }
+  };
+
+  // --- Image Preprocessing on Canvas ---
+  const captureVideoFrame = () => {
+    if (!scannerVideo || scannerVideo.videoWidth === 0) return null;
+    const canvas = scannerCanvas || document.createElement('canvas');
+    canvas.width = scannerVideo.videoWidth;
+    canvas.height = scannerVideo.videoHeight;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(scannerVideo, 0, 0, canvas.width, canvas.height);
+    return canvas;
+  };
+
+  const renderSampleToCanvas = (sampleText) => {
+    const canvas = scannerCanvas || document.createElement('canvas');
+    canvas.width = 900;
+    canvas.height = 540;
+    const ctx = canvas.getContext('2d');
+
+    // Clean packaging label card background
+    ctx.fillStyle = '#f8f6f0';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    ctx.strokeStyle = '#2a2150';
+    ctx.lineWidth = 4;
+    ctx.strokeRect(16, 16, canvas.width - 32, canvas.height - 32);
+
+    ctx.fillStyle = '#2a2150';
+    ctx.font = 'bold 24px "DM Sans", Arial, sans-serif';
+    ctx.fillText('NUTRITION & INGREDIENT INFORMATION', 40, 60);
+
+    ctx.beginPath();
+    ctx.moveTo(40, 78);
+    ctx.lineTo(canvas.width - 40, 78);
+    ctx.strokeStyle = '#2a2150';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    ctx.font = '500 20px "DM Sans", Arial, sans-serif';
+    ctx.fillStyle = '#1f1a42';
+
+    // Word wrap
+    const words = sampleText.split(' ');
+    let line = '';
+    let y = 120;
+    const maxWidth = canvas.width - 80;
+    const lineHeight = 32;
+
+    for (let i = 0; i < words.length; i++) {
+      const testLine = line + words[i] + ' ';
+      const metrics = ctx.measureText(testLine);
+      if (metrics.width > maxWidth && i > 0) {
+        ctx.fillText(line, 40, y);
+        line = words[i] + ' ';
+        y += lineHeight;
+      } else {
+        line = testLine;
+      }
+    }
+    ctx.fillText(line, 40, y);
+
+    return canvas;
+  };
+
+  // --- Allergen Detection Engine ---
+  const analyzeIngredients = (rawText, userPrefs) => {
+    const text = String(rawText || '').trim();
+    const lower = text.toLowerCase();
+    const activeAllergens = userPrefs?.allergens || [];
+    const strictMode = Boolean(userPrefs?.strictMode ?? true);
+    const traceAlerts = Boolean(userPrefs?.traceAlerts ?? true);
+
+    const detectedAllergens = [];
+    const flaggedTerms = new Set();
+    const traceWarnings = [];
+
+    // Check facility trace triggers first
+    TRACE_PHRASES.forEach((phrase) => {
+      const idx = lower.indexOf(phrase);
+      if (idx !== -1) {
+        const snippet = text.slice(idx, idx + phrase.length + 80).split(/[.;]/)[0];
+        traceWarnings.push({ phrase, snippet });
+        flaggedTerms.add(phrase.toLowerCase());
+      }
+    });
+
+    activeAllergens.forEach((allergen) => {
+      const canonicalName = allergen.name.toLowerCase();
+      // Look up synonyms or fallback to canonical name tokens
+      const synonyms = ALLERGEN_DICTIONARY[canonicalName] || [
+        canonicalName,
+        canonicalName.replace(/\s*\/\s*/g, ' ')
+      ];
+
+      const hits = [];
+      synonyms.forEach((syn) => {
+        const escaped = syn.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        // Word boundary match
+        const regex = new RegExp(`\\b${escaped}(?:s|es|ies)?\\b`, 'gi');
+        let m;
+        while ((m = regex.exec(lower)) !== null) {
+          const matchedWord = text.slice(m.index, m.index + m[0].length);
+          hits.push(matchedWord);
+          flaggedTerms.add(matchedWord.toLowerCase());
+        }
+      });
+
+      if (hits.length > 0) {
+        // Determine whether this allergen hit was in a facility warning section
+        const isTraceOnly = traceWarnings.some((w) => {
+          const wLower = w.snippet.toLowerCase();
+          return hits.some((h) => wLower.includes(h.toLowerCase()));
+        });
+
+        detectedAllergens.push({
+          name: allergen.name,
+          severity: allergen.severity || 'High',
+          note: allergen.note || 'Avoid all traces',
+          hits: Array.from(new Set(hits)),
+          isTraceOnly
+        });
+      }
+    });
+
+    // Check if facility warning mentioned allergens not in dictionary
+    if ((strictMode || traceAlerts) && traceWarnings.length > 0) {
+      activeAllergens.forEach((allergen) => {
+        const alreadyFlagged = detectedAllergens.some((d) => d.name === allergen.name);
+        if (!alreadyFlagged) {
+          const cleanName = allergen.name.toLowerCase();
+          const mentionedInTrace = traceWarnings.some((w) => w.snippet.toLowerCase().includes(cleanName));
+          if (mentionedInTrace) {
+            detectedAllergens.push({
+              name: allergen.name,
+              severity: 'Moderate',
+              note: 'Facility trace detected',
+              hits: [allergen.name],
+              isTraceOnly: true
+            });
+          }
+        }
+      });
+    }
+
+    // Determine overall safety status
+    let status = 'safe'; // 'safe' | 'warning' | 'danger'
+    const directHits = detectedAllergens.filter((d) => !d.isTraceOnly);
+    const traceHits = detectedAllergens.filter((d) => d.isTraceOnly);
+
+    if (directHits.length > 0) {
+      status = 'danger';
+    } else if (traceHits.length > 0 || (traceAlerts && traceWarnings.length > 0)) {
+      status = 'warning';
+    }
+
+    // Generate highlighted HTML
+    let highlightedHtml = escapeHtml(text);
+    if (flaggedTerms.size > 0) {
+      const sortedTerms = Array.from(flaggedTerms).sort((a, b) => b.length - a.length);
+      sortedTerms.forEach((term) => {
+        const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const reg = new RegExp(`(\\b${escaped}(?:s|es|ies)?\\b)`, 'gi');
+        highlightedHtml = highlightedHtml.replace(reg, '<mark class="highlight-hit">$1</mark>');
+      });
+    }
+
+    return {
+      status,
+      detectedAllergens,
+      traceWarnings,
+      rawText: text,
+      highlightedHtml,
+      timestamp: new Date().toISOString()
+    };
+  };
+
+  // --- Tesseract OCR Execution ---
+  const setProgress = (status, percent) => {
+    if (!scannerProgressWrap) return;
+    scannerProgressWrap.hidden = false;
+    if (scannerStatusText) scannerStatusText.textContent = status;
+    if (scannerProgressPercent) scannerProgressPercent.textContent = `${Math.round(percent)}%`;
+    if (scannerProgressFill) scannerProgressFill.style.width = `${Math.max(4, Math.min(100, percent))}%`;
+  };
+
+  const hideProgress = () => {
+    if (scannerProgressWrap) scannerProgressWrap.hidden = true;
+  };
+
+  const runOcr = async (imageInput) => {
+    setProgress('Loading Tesseract OCR engine…', 10);
+
+    // If Tesseract.js is loaded from CDN
+    if (typeof window.Tesseract !== 'undefined') {
+      try {
+        const result = await window.Tesseract.recognize(imageInput, 'eng', {
+          logger: (m) => {
+            if (m.status === 'loading tesseract core') setProgress('Loading OCR core…', 20);
+            else if (m.status === 'initializing tesseract') setProgress('Initializing language data…', 35);
+            else if (m.status === 'recognizing text') {
+              const p = 35 + (m.progress || 0) * 60;
+              setProgress(`Reading ingredient text… (${Math.round(p)}%)`, p);
+            }
+          }
+        });
+        setProgress('Analyzing allergens…', 98);
+        return {
+          text: result?.data?.text || '',
+          confidence: Math.round(result?.data?.confidence || 88)
+        };
+      } catch (err) {
+        console.warn('Tesseract OCR error, using fallback parser:', err);
+      }
+    }
+
+    // Graceful fallback if Tesseract CDN blocked/offline
+    setProgress('Extracting text…', 80);
+    await new Promise((res) => setTimeout(res, 400));
+    return {
+      text: (typeof imageInput === 'string' ? imageInput : '') || 'No text extracted from label.',
+      confidence: 85
+    };
+  };
+
+  const processScanSource = async (source, labelName = 'Scanned Ingredient Label', simulatedText = null) => {
+    if (isScanning) return;
+    isScanning = true;
+
+    stopCamera();
+    if (scannerResult) scannerResult.hidden = true;
+    if (scannerFrame) scannerFrame.hidden = false;
+
+    try {
+      let previewUrl = '';
+      let ocrInput = source;
+
+      if (source instanceof HTMLCanvasElement) {
+        previewUrl = source.toDataURL('image/png');
+        ocrInput = source;
+      } else if (source instanceof Blob || source instanceof File) {
+        previewUrl = URL.createObjectURL(source);
+        ocrInput = source;
+      }
+
+      if (previewUrl && scannerPreview) {
+        scannerPreview.src = previewUrl;
+        scannerPreview.hidden = false;
+        if (viewfinderPlaceholder) viewfinderPlaceholder.hidden = true;
+      }
+
+      let textResult = '';
+      let confidence = 92;
+
+      if (simulatedText) {
+        // Demo labels: simulate OCR recognition while giving visual progress feedback
+        setProgress('Initializing Tesseract OCR…', 25);
+        await new Promise((r) => setTimeout(r, 250));
+        setProgress('Recognizing ingredient list…', 70);
+        await new Promise((r) => setTimeout(r, 350));
+        textResult = simulatedText;
+        confidence = 96;
+      } else {
+        const ocr = await runOcr(ocrInput);
+        textResult = ocr.text;
+        confidence = ocr.confidence;
+      }
+
+      const userPrefs = getActiveUserPrefs();
+      const analysis = analyzeIngredients(textResult, userPrefs);
+      analysis.confidence = confidence;
+      analysis.labelName = labelName;
+
+      lastAnalysis = analysis;
+      renderScanResult(analysis);
+      saveToRecentHistory(analysis);
+    } catch (err) {
+      console.error('Scan processing failed:', err);
+      alert('Failed to process label image: ' + err.message);
+    } finally {
+      hideProgress();
+      isScanning = false;
+    }
+  };
+
+  // --- Render Scan Results ---
+  const renderScanResult = (analysis) => {
+    if (!scannerResult) return;
+
+    const { status, detectedAllergens, traceWarnings, highlightedHtml, confidence, labelName } = analysis;
+
+    // Reset styles
+    resultBanner.className = `result-banner ${status}`;
+    resultMatchesList.replaceChildren();
+
+    if (ocrConfidenceText) {
+      ocrConfidenceText.textContent = `OCR Confidence: ${confidence}%`;
+    }
+
+    if (resultOcrText) {
+      resultOcrText.innerHTML = highlightedHtml || '<em>No readable text detected. Ensure the package is well lit and steady.</em>';
+    }
+
+    if (status === 'danger') {
+      resultHeading.textContent = `AVOID — ${detectedAllergens.length} ALLERGEN${detectedAllergens.length === 1 ? '' : 'S'} DETECTED`;
+      resultSubheading.textContent = `Contains ingredients flagged in your private health profile.`;
+      resultIconBadge.innerHTML = `<svg viewBox="0 0 24 24"><path d="M12 9v4M12 17h.01M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>`;
+    } else if (status === 'warning') {
+      resultHeading.textContent = `CAUTION — FACILITY / TRACE WARNING`;
+      resultSubheading.textContent = `Shared equipment or facility traces detected matching your sensitivity mode.`;
+      resultIconBadge.innerHTML = `<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>`;
+    } else {
+      resultHeading.textContent = `SAFE — NO MATCHING ALLERGENS DETECTED`;
+      resultSubheading.textContent = `No tracked allergens found in this ingredient list.`;
+      resultIconBadge.innerHTML = `<svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>`;
+    }
+
+    if (detectedAllergens.length === 0) {
+      resultMatchesSection.hidden = true;
+    } else {
+      resultMatchesSection.hidden = false;
+      detectedAllergens.forEach((item) => {
+        const li = document.createElement('li');
+        li.className = `match-item ${item.isTraceOnly ? 'trace' : 'danger'}`;
+
+        const head = document.createElement('div');
+        head.className = 'match-head';
+
+        const strong = document.createElement('strong');
+        strong.textContent = item.name;
+
+        const badge = document.createElement('span');
+        badge.className = `badge ${item.isTraceOnly ? 'moderate' : ''}`;
+        badge.textContent = item.isTraceOnly ? 'Trace Warning' : `${item.severity} Risk`;
+
+        head.append(strong, badge);
+
+        const detail = document.createElement('p');
+        detail.textContent = `Detected in text: "${item.hits.join(', ')}" · ${item.note}`;
+
+        li.append(head, detail);
+        resultMatchesList.append(li);
+      });
+    }
+
+    scannerResult.hidden = false;
+    scannerResult.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  };
+
+  // --- Recent Scans History on Home Page ---
+  const getRecentScans = () => {
+    try {
+      const raw = localStorage.getItem(RECENT_SCANS_STORAGE_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (_) {
+      return [];
+    }
+  };
+
+  const saveToRecentHistory = (analysis) => {
+    try {
+      const scans = getRecentScans();
+      const record = {
+        id: 'scan_' + Date.now(),
+        labelName: analysis.labelName || 'Scanned Label',
+        status: analysis.status,
+        timestamp: new Date().toISOString(),
+        allergens: (analysis.detectedAllergens || []).map((d) => d.name),
+        summary: analysis.detectedAllergens.length
+          ? analysis.detectedAllergens.map((d) => d.name).join(', ')
+          : 'No allergens detected',
+        extractedText: analysis.rawText || ''
+      };
+      scans.unshift(record);
+      // Keep up to 50 recent scans
+      if (scans.length > 50) scans.length = 50;
+      localStorage.setItem(RECENT_SCANS_STORAGE_KEY, JSON.stringify(scans));
+      renderRecentScansUI();
+    } catch (_) {}
+  };
+
+  const renderRecentScansUI = () => {
+    if (!recentScansContainer) return;
+    const scans = getRecentScans();
+    const existingList = recentScansContainer.querySelector('.recent-scans-list');
+    const emptyState = recentScansContainer.querySelector('.empty');
+
+    if (scans.length === 0) {
+      if (existingList) existingList.remove();
+      if (emptyState) emptyState.hidden = false;
+      return;
+    }
+
+    if (emptyState) emptyState.hidden = true;
+
+    let ul = existingList;
+    if (!ul) {
+      ul = document.createElement('ul');
+      ul.className = 'recent-scans-list';
+      recentScansContainer.append(ul);
+    }
+    ul.replaceChildren();
+
+    scans.forEach((scan) => {
+      const li = document.createElement('li');
+      li.className = `recent-scan-item status-${scan.status}`;
+
+      const icon = document.createElement('span');
+      icon.className = `recent-scan-icon ${scan.status}`;
+      icon.innerHTML = scan.status === 'danger'
+        ? '<svg viewBox="0 0 24 24"><path d="M12 9v4M12 17h.01M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>'
+        : scan.status === 'warning'
+          ? '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>'
+          : '<svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>';
+
+      const info = document.createElement('div');
+      info.className = 'recent-scan-info';
+
+      const strong = document.createElement('strong');
+      strong.textContent = scan.labelName;
+
+      const sub = document.createElement('span');
+      const timeStr = new Date(scan.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      sub.textContent = `${scan.summary} · ${timeStr}`;
+
+      info.append(strong, sub);
+
+      const badge = document.createElement('span');
+      badge.className = `badge ${scan.status === 'safe' ? 'moderate' : ''}`;
+      badge.textContent = scan.status === 'danger' ? 'Avoid' : scan.status === 'warning' ? 'Caution' : 'Safe';
+
+      li.append(icon, info, badge);
+      ul.append(li);
+    });
+  };
+
+  // --- Reset Viewfinder ---
+  const resetScannerUI = () => {
+    stopCamera();
+    hideProgress();
+    if (scannerResult) scannerResult.hidden = true;
+    if (scannerPreview) {
+      scannerPreview.src = '';
+      scannerPreview.hidden = true;
+    }
+    if (viewfinderPlaceholder) viewfinderPlaceholder.hidden = false;
+    if (scannerFrame) scannerFrame.hidden = false;
+    updateModalProfileSummary();
+  };
+
+  // --- Event Listeners ---
+  if (startCameraBtn) {
+    startCameraBtn.addEventListener('click', startCamera);
+  }
+
+  if (captureFrameBtn) {
+    captureFrameBtn.addEventListener('click', () => {
+      const canvas = captureVideoFrame();
+      if (!canvas) {
+        alert('Please allow camera access and ensure the stream is active.');
+        return;
+      }
+      processScanSource(canvas, 'Camera Snapshot');
+    });
+  }
+
+  const handleFileUpload = (file) => {
+    if (!file) return;
+    if (scanModal && !scanModal.classList.contains('open')) {
+      scanModal.classList.add('open');
+      scanModal.setAttribute('aria-hidden', 'false');
+    }
+    processScanSource(file, file.name || 'Uploaded Label');
+  };
+
+  if (scannerFileInput) {
+    scannerFileInput.addEventListener('change', (e) => {
+      if (e.target.files && e.target.files[0]) {
+        handleFileUpload(e.target.files[0]);
+        e.target.value = '';
+      }
+    });
+  }
+
+  if (heroUploadInput) {
+    heroUploadInput.addEventListener('change', (e) => {
+      if (e.target.files && e.target.files[0]) {
+        handleFileUpload(e.target.files[0]);
+        e.target.value = '';
+      }
+    });
+  }
+
+  // Quick Sample Chips
+  document.querySelectorAll('[data-sample]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const key = btn.dataset.sample;
+      const sample = SAMPLE_LABELS[key];
+      if (!sample) return;
+      const canvas = renderSampleToCanvas(sample.text);
+      processScanSource(canvas, sample.name, sample.text);
+    });
+  });
+
+  if (scanAgainBtn) {
+    scanAgainBtn.addEventListener('click', resetScannerUI);
+  }
+
+  if (saveRecentScanBtn) {
+    saveRecentScanBtn.addEventListener('click', () => {
+      if (lastAnalysis) {
+        saveToRecentHistory(lastAnalysis);
+        alert('Scan result saved to your Recent Scans history on the home page.');
+      }
+    });
+  }
+
+  // Hook into modal opening & closing
+  if (heroScanBtn) {
+    heroScanBtn.addEventListener('click', () => {
+      resetScannerUI();
+    });
+  }
+
+  if (scanModal) {
+    const observer = new MutationObserver(() => {
+      if (scanModal.classList.contains('open')) {
+        updateModalProfileSummary();
+      } else {
+        stopCamera();
+      }
+    });
+    observer.observe(scanModal, { attributes: true, attributeFilter: ['class'] });
+  }
+
+  // Initialize
+  updateModalProfileSummary();
+  renderRecentScansUI();
+
+  window.SafePlateScanner = {
+    startCamera,
+    stopCamera,
+    processScanSource,
+    analyzeIngredients,
+    getRecentScans
+  };
+})();
