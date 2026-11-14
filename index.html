@@ -12,177 +12,294 @@
 <body>
 
 <header class="topbar">
-  <a class="brand" href="#">
+  <a class="brand" href="#" onclick="showPage('page-overview', document.getElementById('nav-overview'))">
     <span class="logo"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 3v6c0 4.5-3.2 8-8 9-4.8-1-8-4.5-8-9V6l8-3z"/><path d="M8.5 12l2.5 2.5 4.5-5"/></svg></span>
     SafePlate
   </a>
 
   <nav class="nav" aria-label="Main">
-    <a class="active" href="#">
+    <a class="active" href="#" id="nav-overview" onclick="showPage('page-overview', this)">
       <svg viewBox="0 0 24 24"><path d="M3 11l9-8 9 8v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg>Overview</a>
-    <a href="#" data-open="scanModal">
+    <a href="#" id="nav-scanner" onclick="showPage('page-scanner', this)">
       <svg viewBox="0 0 24 24"><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3M8 12h8"/></svg>Scanner</a>
-    <a href="#">
+    <a href="#" id="nav-history" onclick="showPage('page-history', this)">
       <svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5M12 7v5l3 2"/></svg>History</a>
-    <a href="#">
+    <a href="#" id="nav-ask" onclick="showPage('page-ask', this)">
       <svg viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-11.8 7L3 21l2-5.5A8 8 0 1 1 21 12z"/></svg>Ask SafePlate</a>
   </nav>
 
   <div class="actions">
-    <button class="icon-btn" aria-label="Notifications">
-      <svg viewBox="0 0 24 24"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 8 3 8H3s3-1 3-8M10 20a2 2 0 0 0 4 0"/></svg>
-    </button>
+    <!-- Notification Bell -->
+    <div style="position: relative;">
+      <button class="icon-btn" id="notifBtn" aria-label="Notifications">
+        <svg viewBox="0 0 24 24"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 8 3 8H3s3-1 3-8M10 20a2 2 0 0 0 4 0"/></svg>
+        <span id="notifRedDot" style="position: absolute; top: 10px; right: 12px; width: 8px; height: 8px; background: #c8473f; border-radius: 50%;"></span>
+      </button>
+      
+      <!-- Notification Dropdown -->
+      <div id="notifDropdown" style="display: none; position: absolute; top: 60px; right: 0; width: 320px; background: #fff; border: 1px solid var(--line); border-radius: 16px; box-shadow: 0 10px 30px rgba(0,0,0,0.1); z-index: 100; overflow: hidden;">
+        <div style="padding: 15px; border-bottom: 1px solid var(--line); font-weight: 600; background: #f9f9f9; color: var(--ink); display: flex; justify-content: space-between; align-items: center;">
+          <span>Notifications</span>
+          <button id="markAllReadBtn" style="background: none; border: none; color: var(--indigo); font-size: 12px; font-weight: 600; cursor: pointer; padding: 0;">Mark all as read</button>
+        </div>
+        <div id="notifList" style="max-height: 300px; overflow-y: auto;">
+          <!-- Notifications injected by JS -->
+        </div>
+      </div>
+    </div>
+    
     <button class="btn btn-lime" data-open="signupModal">Create profile</button>
   </div>
 </header>
 
 <main class="page">
-  <section class="intro">
-    <div>
-      <p class="status"><span class="dot"></span>Your profile is active and protected</p>
-      <h1>Eat with confidence.</h1>
-      <p class="lede">Scan any label and understand what it means for your body—before it reaches your plate.</p>
-    </div>
-    <div class="protect">
-      <span class="protect-icon"><svg viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 4.5-3.2 8-8 9-4.8-1-8-4.5-8-9V6l8-3z"/><path d="M8.5 12l2.5 2.5 4.5-5"/></svg></span>
+  
+  <!-- PAGE 1: OVERVIEW -->
+  <div id="page-overview" class="page-view active">
+    <section class="intro">
       <div>
-        <small>Protected from</small>
-        <strong>2 allergens · strict mode</strong>
+        <p class="status"><span class="dot"></span>Your profile is active and protected</p>
+        <h1>Eat with confidence.</h1>
+        <p class="lede">Scan any label and understand what it means for your body—before it reaches your plate.</p>
+      </div>
+      <div class="protect">
+        <span class="protect-icon"><svg viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 4.5-3.2 8-8 9-4.8-1-8-4.5-8-9V6l8-3z"/><path d="M8.5 12l2.5 2.5 4.5-5"/></svg></span>
+        <div>
+          <small>Protected from</small>
+          <strong id="overviewProtectedText">2 allergens · strict mode</strong>
+        </div>
+      </div>
+    </section>
+
+    <div class="grid">
+      <!-- Hero -->
+      <section class="card hero">
+        <span class="pill">
+          <svg viewBox="0 0 24 24"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 16l.7 2.3L22 19l-2.3.7L19 22l-.7-2.3L16 19l2.3-.7z"/></svg>
+          Personalized analysis
+        </span>
+        <h2>Point. Scan. Know.</h2>
+        <p>Scan a barcode for verified data or photograph the ingredient label. SafePlate checks derivatives, scientific names, and facility warnings.</p>
+        
+        <div class="hero-actions">
+          <button class="btn btn-dark" onclick="triggerBarcodeScan()">
+            <svg viewBox="0 0 24 24"><path d="M4 5v14M8 5v14M12 5v14M16 5v14M20 5v14"/></svg>
+            Scan barcode
+            <svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+          </button>
+          <button class="btn btn-ghost" onclick="triggerCameraOpen()">
+            <svg viewBox="0 0 24 24"><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7M16 5h6M19 2v6M21 15l-5-5L5 21M8.5 8.5h.01"/></svg>
+            Take a photo
+          </button>
+        </div>
+      </section>
+
+      <!-- Allergy profile -->
+      <section class="card allergy">
+        <div class="card-head">
+          <h3 class="label">My allergy profile</h3>
+          <button class="icon-btn small" data-open="settingsModal" aria-label="Settings">
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+          </button>
+        </div>
+        <ul class="allergens" id="allergyDisplayList"></ul>
+        <a class="card-link" href="#" data-open="settingsModal">Update health profile
+          <svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
+        </a>
+      </section>
+
+      <!-- Recent scans -->
+      <section class="card recent">
+        <div class="card-head">
+          <div>
+            <h3 class="label">Recent scans</h3>
+            <h4>Your last checks</h4>
+          </div>
+        </div>
+        <div class="empty" id="recentScanContainer">
+          <span class="empty-icon"><svg viewBox="0 0 24 24"><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3M8 12h8"/></svg></span>
+          <div><strong>No scans yet</strong><span>Your private scan history will appear here.</span></div>
+        </div>
+      </section>
+
+      <!-- Ask AI Card -->
+      <section class="card ai">
+        <div class="ai-head">
+          <span class="ai-icon"><svg viewBox="0 0 24 24"><path d="M12 3l1.800 5.200L19 10l-5.200 1.800L12 17l-1.800-5.200L5 10l5.200-1.800zM19 16l.7 2.300L22 19l-2.300.7L19 22l-.7-2.300L16 19l2.300-.7z"/></svg></span>
+          <div>
+            <h3 class="label">SafePlate AI</h3>
+            <h4>Ask anything you eat</h4>
+          </div>
+        </div>
+        
+        <div class="chips" id="homeChatChips" style="margin: 20px 0;">
+          <button>Is oat milk safe for me?</button>
+          <button>Find a nut-free granola</button>
+          <button>What is sodium caseinate?</button>
+        </div>
+
+        <form class="ask" id="homeAskForm">
+          <svg viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-11.800 7L3 21l2-5.500A8 8 0 1 1 21 12z"/></svg>
+          <input type="text" id="homeAskInput" placeholder="Can I eat this if it contains whey?" required>
+          <button class="send" type="submit" aria-label="Send"><svg viewBox="0 0 24 24"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4z"/></svg></button>
+        </form>
+      </section>
+    </div>
+  </div>
+
+  <!-- PAGE 2: SCANNER -->
+  <div id="page-scanner" class="page-view">
+    <section class="intro">
+      <div>
+        <h1 style="font-size: 48px;">AI Scanner</h1>
+        <p class="lede">Scan a barcode or take a photo of the ingredient label.</p>
+      </div>
+    </section>
+
+    <!-- UI for initial choices -->
+    <div id="scannerChoices" style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; max-width: 1000px; margin: 0 auto;">
+      
+      <!-- Option 1: Label Scanner (Camera OR File Upload) -->
+      <div class="card" style="background: var(--paper); text-align: center;">
+        <div style="padding: 40px 20px; border: 2px dashed var(--line); border-radius: 20px; height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center;">
+          <svg viewBox="0 0 24 24" style="width: 40px; height: 40px; margin-bottom: 15px; color: var(--indigo);"><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7M16 5h6M19 2v6M21 15l-5-5L5 21M8.5 8.5h.01"/></svg>
+          <h3 style="font-size: 22px; margin-bottom: 10px;">Scan Food Label</h3>
+          <p style="color: var(--ink-soft); margin-bottom: 20px; font-size: 15px;">Capture live or upload from your gallery.</p>
+          
+          <div style="display: flex; gap: 10px; margin: 0 auto; flex-wrap: wrap; justify-content: center;">
+            <button class="btn btn-dark" onclick="startCamera()">Open Camera</button>
+            <input type="file" id="fileUploadInput" accept="image/*" hidden>
+            <button class="btn btn-ghost" onclick="document.getElementById('fileUploadInput').click()" style="background: #fff; border: 1px solid var(--indigo); color: var(--indigo);">Upload File</button>
+          </div>
+          
+        </div>
+      </div>
+
+      <!-- Option 2: Barcode Scanner -->
+      <div class="card" style="background: var(--night); color: #fff; text-align: center;">
+        <div style="padding: 40px 20px; border: 2px dashed rgba(255,255,255,0.2); border-radius: 20px; height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center;">
+          <svg viewBox="0 0 24 24" style="width: 40px; height: 40px; margin-bottom: 15px; color: var(--lime-btn);"><path d="M4 5v14M8 5v14M12 5v14M16 5v14M20 5v14"/></svg>
+          <h3 style="font-size: 22px; margin-bottom: 10px;">Scan Barcode</h3>
+          <p style="color: #b5afd3; margin-bottom: 20px; font-size: 15px;">Point your camera at the product barcode.</p>
+          <button class="btn btn-lime" onclick="startBarcodeScanner()" style="margin: 0 auto;">Scan Now</button>
+        </div>
       </div>
     </div>
-  </section>
 
-  <div class="grid">
-    <!-- Hero -->
-    <section class="card hero">
-      <span class="pill">
-        <svg viewBox="0 0 24 24"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 16l.7 2.3L22 19l-2.3.7L19 22l-.7-2.3L16 19l2.3-.7z"/></svg>
-        Personalized analysis
-      </span>
-      <h2>Point. Scan. Know.</h2>
-      <p>Scan a barcode for verified data or photograph the ingredient label. SafePlate checks derivatives, scientific names, and facility warnings.</p>
-      <div class="hero-actions">
-        <button class="btn btn-dark" data-open="scanModal">
-          <svg viewBox="0 0 24 24"><path d="M4 5v14M8 5v14M12 5v14M16 5v14M20 5v14"/></svg>
-          Scan barcode
-          <svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
-        </button>
-        <label class="btn btn-ghost" for="labelUpload">
-          <svg viewBox="0 0 24 24"><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7M16 5h6M19 2v6M21 15l-5-5L5 21M8.5 8.5h.01"/></svg>
-          Upload label
-        </label>
-        <input id="labelUpload" type="file" accept="image/*" hidden>
+    <!-- Live Camera Area (Hidden by default) -->
+    <div id="cameraContainer" style="display: none; max-width: 600px; margin: 0 auto; text-align: center;">
+      <video id="cameraFeed" autoplay playsinline style="width: 100%; border-radius: 20px; background: #000; box-shadow: 0 10px 30px rgba(0,0,0,0.2);"></video>
+      <br><br>
+      <button class="btn btn-dark" id="captureBtn">Capture & Analyze</button>
+      <button class="btn btn-ghost" onclick="stopCamera()" style="margin-left: 10px;">Cancel</button>
+    </div>
+
+    <!-- Result Box for Scanner -->
+    <div id="resultContainer" style="display: none; max-width: 800px; margin: 30px auto 0; padding: 30px; border-radius: 20px; text-align: left;">
+      <h2 id="resultTitle" style="margin-bottom: 10px;">Reading Label...</h2>
+      <p id="resultExplanation" style="line-height: 1.6;"></p>
+    </div>
+  </div>
+
+  <!-- PAGE 3: HISTORY -->
+  <div id="page-history" class="page-view">
+    <section class="intro">
+      <div>
+        <h1 style="font-size: 48px;">Scan History</h1>
+        <p class="lede">A record of your recent food checks.</p>
+      </div>
+    </section>
+    <div class="card" style="background: var(--paper); max-width: 800px; margin: 0 auto; padding: 40px;">
+      <div id="historyContainer"></div>
+    </div>
+  </div>
+
+  <!-- PAGE 4: ASK AI FULL PAGE -->
+  <div id="page-ask" class="page-view">
+    <section class="intro">
+      <div>
+        <h1 style="font-size: 48px;">SafePlate AI</h1>
+        <p class="lede">Your personal food safety assistant.</p>
       </div>
     </section>
 
-    <!-- Allergy profile -->
-    <section class="card allergy">
-      <div class="card-head">
-        <h3 class="label">My allergy profile</h3>
-        <button class="icon-btn small" aria-label="Settings">
-          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
-        </button>
-      </div>
-
-      <ul class="allergens">
-        <li>
-          <span class="a-icon red"><svg viewBox="0 0 24 24"><path d="M12 3c-3 0-5 2-5 4.5 0 1 .4 1.800 1 2.500-1.500.800-2.500 2.200-2.500 4 0 2.800 2.500 5 5.500 5s5.500-2.200 5.500-5c0-1.800-1-3.200-2.500-4 .6-.7 1-1.500 1-2.500C17 5 15 3 12 3z"/></svg></span>
-          <div><strong>Peanuts</strong><span>Avoid all traces</span></div>
-          <em class="badge">High</em>
-        </li>
-        <li>
-          <span class="a-icon violet"><svg viewBox="0 0 24 24"><path d="M12 3c0 4-3 4-3 8s3 4 3 8M12 3c0 4 3 4 3 8s-3 4-3 8M8 7l-3-1M16 7l3-1M8 14l-3-1M16 14l3-1"/></svg></span>
-          <div><strong>Dairy</strong><span>Includes derivatives</span></div>
-          <em class="badge">High</em>
-        </li>
-      </ul>
-
-      <a class="card-link" href="#">Update health profile
-        <svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
-      </a>
-    </section>
-
-    <!-- Recent scans -->
-    <section class="card recent">
-      <div class="card-head">
-        <div>
-          <h3 class="label">Recent scans</h3>
-          <h4>Your last checks</h4>
-        </div>
-        <button class="icon-btn small" aria-label="More options">
-          <svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="19" cy="12" r="1.2"/></svg>
-        </button>
-      </div>
-      <div class="empty">
-        <span class="empty-icon"><svg viewBox="0 0 24 24"><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3M8 12h8"/></svg></span>
-        <div><strong>No scans yet</strong><span>Your private scan history will appear here.</span></div>
-      </div>
-    </section>
-
-    <!-- Ask AI -->
-    <section class="card ai">
-      <div class="ai-head">
-        <span class="ai-icon"><svg viewBox="0 0 24 24"><path d="M12 3l1.800 5.200L19 10l-5.200 1.800L12 17l-1.800-5.200L5 10l5.200-1.800zM19 16l.7 2.300L22 19l-2.300.7L19 22l-.7-2.300L16 19l2.300-.7z"/></svg></span>
-        <div>
-          <h3 class="label">SafePlate AI</h3>
-          <h4>Ask anything you eat</h4>
-        </div>
-      </div>
-      <div class="chips">
+    <div class="card ai" style="max-width: 800px; margin: 0 auto; min-height: 500px; display: flex; flex-direction: column;">
+      
+      <!-- Suggestion Chips -->
+      <div class="chips" id="chatChips" style="margin-bottom: 20px;">
         <button>Is oat milk safe for me?</button>
         <button>Find a nut-free granola</button>
         <button>What is sodium caseinate?</button>
       </div>
-      <form class="ask" onsubmit="return false">
+      
+      <!-- Chat Messages Container -->
+      <div id="chatMessages" class="chat-history">
+        <div class="chat-msg-ai">Hi! I'm SafePlate AI. Ask me anything about food ingredients or your allergies.</div>
+      </div>
+
+      <!-- Input Area -->
+      <form class="ask" id="askForm" style="margin-top: 20px;">
         <svg viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-11.800 7L3 21l2-5.500A8 8 0 1 1 21 12z"/></svg>
-        <input type="text" placeholder="Can I eat this if it contains whey?" aria-label="Ask SafePlate">
-        <button class="send" aria-label="Send"><svg viewBox="0 0 24 24"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4z"/></svg></button>
+        <input type="text" id="askInput" placeholder="Can I eat this if it contains whey?" aria-label="Ask SafePlate">
+        <button class="send" type="submit" aria-label="Send"><svg viewBox="0 0 24 24"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4z"/></svg></button>
       </form>
-    </section>
+    </div>
   </div>
+
 </main>
 
-<footer class="footer">
-  <p><svg viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 4.500-3.200 8-8 9-4.800-1-8-4.500-8-9V6l8-3z"/></svg>Guidance only—always check the package and consult your clinician.</p>
-  <nav><a href="#">Privacy</a><a href="#">Medical disclaimer</a><a href="#">Help</a></nav>
-</footer>
-
-<!-- Sign-up modal -->
-<div class="overlay" id="signupModal" aria-hidden="true">
-  <div class="modal light" role="dialog" aria-modal="true" aria-labelledby="signupTitle">
+<!-- MODALS -->
+<div class="overlay" id="settingsModal" aria-hidden="true">
+  <div class="modal light" role="dialog" aria-modal="true">
     <button class="icon-btn small close" data-close aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
-    <a class="brand" href="#"><span class="logo"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 3v6c0 4.5-3.2 8-8 9-4.8-1-8-4.5-8-9V6l8-3z"/><path d="M8.5 12l2.5 2.5 4.5-5"/></svg></span>SafePlate</a>
-    <p class="label">Create your private profile</p>
-    <h2 id="signupTitle">Food confidence starts here.</h2>
-    <form class="signup" onsubmit="return false">
-      <input type="text" placeholder="Full name" aria-label="Full name">
-      <input type="email" placeholder="Email address" aria-label="Email address">
-      <input type="password" placeholder="Password (8+ characters)" aria-label="Password" minlength="8">
-      <button class="btn btn-dark block">Create account <svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
+    <h2 style="font-family: var(--serif); font-size: 32px; margin-bottom: 20px;">Update Health Profile</h2>
+    <form id="settingsForm" style="display: flex; flex-direction: column; gap: 15px;">
+      <label style="display: flex; align-items: center; gap: 10px; font-size: 18px; cursor: pointer;"><input type="checkbox" value="peanut" class="allergy-check" style="width: 20px; height: 20px;"> Peanuts</label>
+      <label style="display: flex; align-items: center; gap: 10px; font-size: 18px; cursor: pointer;"><input type="checkbox" value="milk" class="allergy-check" style="width: 20px; height: 20px;"> Dairy / Milk</label>
+      <label style="display: flex; align-items: center; gap: 10px; font-size: 18px; cursor: pointer;"><input type="checkbox" value="shellfish" class="allergy-check" style="width: 20px; height: 20px;"> Shellfish</label>
+      <label style="display: flex; align-items: center; gap: 10px; font-size: 18px; cursor: pointer;"><input type="checkbox" value="gluten" class="allergy-check" style="width: 20px; height: 20px;"> Gluten / Wheat</label>
+      <button type="submit" class="btn btn-dark block" style="margin-top: 20px;">Save Profile</button>
     </form>
-    <a class="signin" href="#">Already protected? Sign in</a>
-    <p class="fine"><svg viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 4.500-3.200 8-8 9-4.800-1-8-4.500-8-9V6l8-3z"/><path d="M8.500 12l2.500 2.500 4.500-5"/></svg>Encrypted profile · Never shared with brands</p>
   </div>
 </div>
 
-<!-- Scanner modal -->
-<div class="overlay dark" id="scanModal" aria-hidden="true">
-  <div class="modal night" role="dialog" aria-modal="true" aria-labelledby="scanTitle">
-    <button class="icon-btn small close" data-close aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
-    <h2 id="scanTitle">Align the barcode</h2>
-    <p>Keep the package steady and well lit</p>
-    <div class="viewfinder">
-      <div class="frame"><i></i><i></i><i></i><i></i><span class="beam"></span></div>
+<!-- Barcode Scanner Modal (With Laser Animation) -->
+<div class="overlay dark" id="barcodeModal" aria-hidden="true">
+  <div class="modal night" role="dialog" aria-modal="true" style="text-align: center; max-width: 500px;">
+    <h2 style="margin-bottom: 20px; color: #fff;">Scanning Barcode...</h2>
+    
+    <!-- Scanner Window -->
+    <div style="position: relative; height: 300px; background: #111; border-radius: 20px; overflow: hidden; margin-bottom: 20px; border: 2px solid rgba(255,255,255,0.1);">
+      <!-- Barcode dummy background -->
+      <svg viewBox="0 0 100 30" style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 80%; height: auto; opacity: 0.3;">
+        <path d="M10 0v30M15 0v30M20 0v30M25 0v30M30 0v30M35 0v30M40 0v30M45 0v30M50 0v30M55 0v30M60 0v30M65 0v30M70 0v30M75 0v30M80 0v30M85 0v30M90 0v30" stroke="#fff" stroke-width="2"/>
+      </svg>
+      
+      <!-- Laser Line -->
+      <div class="laser"></div>
     </div>
-    <button class="btn btn-lime block">
-      <svg viewBox="0 0 24 24"><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3M8 12h8"/></svg>
-      Capture demo scan
-    </button>
+    
+    <p style="color: #b5afd3;">Align barcode within the frame.</p>
+  </div>
+</div>
+
+<!-- Sign-up Modal -->
+<div class="overlay" id="signupModal" aria-hidden="true">
+  <div class="modal light" role="dialog" aria-modal="true">
+    <button class="icon-btn small close" data-close aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    <a class="brand" href="#"><span class="logo"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 3v6c0 4.5-3.2 8-8 9-4.8-1-8-4.5-8-9V6l8-3z"/><path d="M8.5 12l2.5 2.5 4.5-5"/></svg></span>SafePlate</a>
+    <h2>Food confidence starts here.</h2>
+    <form class="signup" onsubmit="return false">
+      <input type="text" placeholder="Full name">
+      <input type="email" placeholder="Email address">
+      <input type="password" placeholder="Password">
+      <button class="btn btn-dark block">Create account</button>
+    </form>
   </div>
 </div>
 
 <script>
-  // Open / close modals
+  // Modal Logic
   document.querySelectorAll('[data-open]').forEach(el => el.addEventListener('click', e => {
     e.preventDefault();
     const m = document.getElementById(el.dataset.open);
@@ -194,6 +311,22 @@
   document.querySelectorAll('[data-close]').forEach(b => b.addEventListener('click', closeAll));
   document.querySelectorAll('.overlay').forEach(o => o.addEventListener('click', e => { if (e.target === o) closeAll(); }));
   document.addEventListener('keydown', e => { if (e.key === 'Escape') closeAll(); });
+
+  // Routing Logic
+  function showPage(pageId, navElement) {
+    document.querySelectorAll('.page-view').forEach(p => p.classList.remove('active'));
+    document.getElementById(pageId).classList.add('active');
+    if (navElement) {
+      document.querySelectorAll('.nav a').forEach(a => a.classList.remove('active'));
+      navElement.classList.add('active');
+    }
+    if (pageId === 'page-history') loadHistoryUI();
+    if (pageId !== 'page-scanner') stopCamera();
+    window.scrollTo(0, 0);
+  }
 </script>
+<script src='https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js'></script>
+<script src="config.js"></script>
+<script src="script.js"></script>
 </body>
 </html>
