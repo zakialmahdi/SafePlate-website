@@ -137,10 +137,17 @@
   };
 
   const getActiveUserPrefs = () => {
-    if (window.SafePlateAuth && typeof window.SafePlateAuth.getUserPreferences === 'function') {
-      const client = window.SafePlateAuth.client;
-      // If signed in, current user will have their preferences in localStorage cache or memory
-      return window.SafePlateAuth.getUserPreferences(window.SafePlateAuth.client?.auth?.currentUser || null);
+    if (window.SafePlateAuth) {
+      if (typeof window.SafePlateAuth.getCurrentPreferences === 'function') {
+        const prefs = window.SafePlateAuth.getCurrentPreferences();
+        if (prefs) return prefs;
+      }
+      if (typeof window.SafePlateAuth.getUserPreferences === 'function') {
+        const user = typeof window.SafePlateAuth.getCurrentUser === 'function'
+          ? window.SafePlateAuth.getCurrentUser()
+          : null;
+        return window.SafePlateAuth.getUserPreferences(user);
+      }
     }
     return {
       strictMode: true,
@@ -152,13 +159,24 @@
     };
   };
 
-  const updateModalProfileSummary = () => {
+  const getActiveUserPrefsAsync = async () => {
+    if (window.SafePlateAuth && typeof window.SafePlateAuth.getActivePreferences === 'function') {
+      try {
+        const prefs = await window.SafePlateAuth.getActivePreferences();
+        if (prefs) return prefs;
+      } catch (_) {}
+    }
+    return getActiveUserPrefs();
+  };
+
+  const updateModalProfileSummary = (prefsOverride = null) => {
     if (!scannerProfileText) return;
-    const prefs = getActiveUserPrefs();
+    const prefs = prefsOverride || getActiveUserPrefs();
     const count = prefs.allergens?.length || 0;
     const names = (prefs.allergens || []).map((a) => a.name).join(', ') || 'None';
     const mode = prefs.strictMode ? 'Strict mode active' : 'Standard mode';
-    scannerProfileText.textContent = `${count} tracked: ${names} · ${mode}`;
+    const traceNote = prefs.traceAlerts ? ' · Trace alerts' : '';
+    scannerProfileText.textContent = `${count} tracked: ${names} · ${mode}${traceNote}`;
   };
 
   // --- Camera Streaming ---
@@ -358,9 +376,16 @@
 
     if (directHits.length > 0) {
       status = 'danger';
-    } else if (traceHits.length > 0 || (traceAlerts && traceWarnings.length > 0)) {
+    } else if ((strictMode || traceAlerts) && traceHits.length > 0) {
+      status = 'warning';
+    } else if (traceAlerts && traceWarnings.length > 0 && activeAllergens.length === 0) {
       status = 'warning';
     }
+
+    // If both strictMode and traceAlerts are false, filter out trace-only hits
+    const finalDetected = (!strictMode && !traceAlerts)
+      ? detectedAllergens.filter((d) => !d.isTraceOnly)
+      : detectedAllergens;
 
     // Generate highlighted HTML
     let highlightedHtml = escapeHtml(text);
@@ -375,7 +400,7 @@
 
     return {
       status,
-      detectedAllergens,
+      detectedAllergens: finalDetected,
       traceWarnings,
       rawText: text,
       highlightedHtml,
@@ -474,7 +499,7 @@
         confidence = ocr.confidence;
       }
 
-      const userPrefs = getActiveUserPrefs();
+      const userPrefs = await getActiveUserPrefsAsync();
       const analysis = analyzeIngredients(textResult, userPrefs);
       analysis.confidence = confidence;
       analysis.labelName = labelName;
@@ -732,7 +757,7 @@
     });
   }
 
-  if (scanModal) {
+  if (scanModal && typeof MutationObserver !== 'undefined') {
     const observer = new MutationObserver(() => {
       if (scanModal.classList.contains('open')) {
         updateModalProfileSummary();
@@ -743,15 +768,37 @@
     observer.observe(scanModal, { attributes: true, attributeFilter: ['class'] });
   }
 
-  // Initialize
+  // Initialize & subscribe to live profile updates
   updateModalProfileSummary();
   renderRecentScansUI();
+
+  if (window.SafePlateAuth) {
+    if (typeof window.SafePlateAuth.onPreferencesChanged === 'function') {
+      window.SafePlateAuth.onPreferencesChanged((prefs) => {
+        updateModalProfileSummary(prefs);
+      });
+    }
+    if (typeof window.SafePlateAuth.subscribeAllergySync === 'function') {
+      window.SafePlateAuth.subscribeAllergySync(async () => {
+        const prefs = await getActiveUserPrefsAsync();
+        updateModalProfileSummary(prefs);
+      });
+    }
+  }
+  window.addEventListener('safeplate:preferences-updated', (e) => {
+    if (e.detail?.prefs) {
+      updateModalProfileSummary(e.detail.prefs);
+    }
+  });
 
   window.SafePlateScanner = {
     startCamera,
     stopCamera,
     processScanSource,
     analyzeIngredients,
+    getActiveUserPrefs,
+    getActiveUserPrefsAsync,
+    updateModalProfileSummary,
     getRecentScans
   };
 })();

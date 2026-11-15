@@ -105,11 +105,15 @@
     return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
   };
 
-  const updateHeaderUser = (user) => {
+  const updateHeaderUser = (user, prefsOverride = null) => {
     currentUser = user || null;
-    const prefs = auth && typeof auth.getUserPreferences === 'function'
-      ? auth.getUserPreferences(currentUser)
-      : { strictMode: true, allergens: [{ name: 'Peanuts' }, { name: 'Dairy' }] };
+    const prefs = prefsOverride || (
+      auth && typeof auth.getCurrentPreferences === 'function'
+        ? auth.getCurrentPreferences()
+        : auth && typeof auth.getUserPreferences === 'function'
+          ? auth.getUserPreferences(currentUser)
+          : { strictMode: true, traceAlerts: true, allergens: [{ name: 'Peanuts' }, { name: 'Dairy' }] }
+    );
 
     if (currentUser) {
       const name = prefs.fullName || currentUser.email || 'Account';
@@ -323,16 +327,47 @@
   });
 
   // --- Auth Session Sync ---
-  if (auth && auth.client) {
-    auth.client.auth.getSession().then(({ data }) => {
-      updateHeaderUser(data?.session?.user || null);
-    });
-    auth.client.auth.onAuthStateChange((_event, session) => {
-      updateHeaderUser(session?.user || null);
-    });
+  if (auth) {
+    if (typeof auth.onPreferencesChanged === 'function') {
+      auth.onPreferencesChanged((prefs, user) => {
+        updateHeaderUser(user, prefs);
+      });
+    }
+
+    if (auth.client) {
+      auth.client.auth.getSession().then(({ data }) => {
+        const sessionUser = data?.session?.user || null;
+        if (sessionUser && typeof auth.loadUserAllergyProfile === 'function') {
+          auth.loadUserAllergyProfile(sessionUser).then(({ prefs }) => {
+            updateHeaderUser(sessionUser, prefs);
+          }).catch(() => {
+            updateHeaderUser(sessionUser);
+          });
+        } else {
+          updateHeaderUser(sessionUser);
+        }
+      });
+      auth.client.auth.onAuthStateChange((_event, session) => {
+        const sessionUser = session?.user || null;
+        if (sessionUser && typeof auth.loadUserAllergyProfile === 'function') {
+          auth.loadUserAllergyProfile(sessionUser).then(({ prefs }) => {
+            updateHeaderUser(sessionUser, prefs);
+          }).catch(() => {
+            updateHeaderUser(sessionUser);
+          });
+        } else {
+          updateHeaderUser(sessionUser);
+        }
+      });
+    }
+
     if (typeof auth.subscribeAllergySync === 'function') {
-      auth.subscribeAllergySync(() => {
-        updateHeaderUser(auth.client.auth.currentUser || currentUser);
+      auth.subscribeAllergySync(async () => {
+        const user = typeof auth.getCurrentUser === 'function' ? auth.getCurrentUser() : currentUser;
+        const prefs = typeof auth.getActivePreferences === 'function'
+          ? await auth.getActivePreferences()
+          : auth.getUserPreferences(user);
+        updateHeaderUser(user, prefs);
       });
     }
   } else {

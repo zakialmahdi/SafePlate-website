@@ -464,26 +464,57 @@
     return svg;
   };
 
-  window.SafePlateAuth = {
-    client: sb,
-    hasKey,
-    hasSdk,
-    DEFAULT_ALLERGENS,
-    normalizeAllergens,
-    getUserPreferences,
-    formatProtectionSummary,
-    loadUserAllergyProfile,
-    saveUserAllergyProfile,
-    syncProfileTable,
-    clearCachedPrefs,
-    notifyAllergySync,
-    subscribeAllergySync,
-    initValidation,
-    initPasswordToggles,
-    getRedirectUrl,
-    setBusy,
-    getConfigErrorMessage,
-    createShieldSvg
+  // --- Core State & Listeners ---
+  let currentUser = null;
+  let currentOverviewPrefs = getUserPreferences(null);
+  let activeProfileLoadSeq = 0;
+  const prefListeners = new Set();
+
+  const onPreferencesChanged = (callback) => {
+    if (typeof callback !== 'function') return () => {};
+    prefListeners.add(callback);
+    try {
+      callback(currentOverviewPrefs, currentUser);
+    } catch (_) {}
+    return () => prefListeners.delete(callback);
+  };
+
+  const emitPreferencesChanged = (prefs, user) => {
+    prefListeners.forEach((fn) => {
+      try {
+        fn(prefs, user);
+      } catch (_) {}
+    });
+    try {
+      window.dispatchEvent(new CustomEvent('safeplate:preferences-updated', {
+        detail: { prefs, user }
+      }));
+    } catch (_) {}
+  };
+
+  const getActivePreferences = async () => {
+    if (currentUser) {
+      if (currentOverviewPrefs && currentOverviewPrefs.updatedAt) {
+        return currentOverviewPrefs;
+      }
+      const { prefs } = await loadUserAllergyProfile(currentUser);
+      renderUserState(currentUser, prefs);
+      return prefs;
+    }
+
+    if (sb) {
+      try {
+        const { data } = await sb.auth.getSession();
+        const sessionUser = data?.session?.user || null;
+        if (sessionUser) {
+          const { prefs } = await loadUserAllergyProfile(sessionUser);
+          renderUserState(sessionUser, prefs);
+          return prefs;
+        }
+      } catch (_) {}
+    }
+
+    return currentOverviewPrefs || getUserPreferences(null);
   };
 
   // --- Shared header & overview sync ---
@@ -495,8 +526,6 @@
   const authStatusDot = document.getElementById('authStatusDot');
   const protectSummary = document.getElementById('protectSummary');
   const allergyList = document.getElementById('allergyList');
-
-  let currentOverviewPrefs = getUserPreferences(null);
 
   const renderOverviewAllergens = (user, prefsOverride = null) => {
     if (!protectSummary && !allergyList) return;
@@ -547,141 +576,7 @@
     }
   };
 
-  // --- Auth dialog logic (index.html) ---
-  const authDialog = document.getElementById('signupModal');
-  if (!authDialog) return;
-
-  const authTitle = document.getElementById('authTitle');
-  const authSubtitle = document.getElementById('authSubtitle');
-  const authFeedback = document.getElementById('authFeedback');
-  const accountName = document.getElementById('accountName');
-  const accountEmail = document.getElementById('accountEmail');
-  const accountProtectSummary = document.getElementById('accountProtectSummary');
-  const signOutBtn = document.getElementById('signOutBtn');
-
-  const forms = {
-    signup: document.getElementById('signupForm'),
-    signin: document.getElementById('signinForm'),
-    forgot: document.getElementById('forgotForm'),
-    recovery: document.getElementById('recoveryForm'),
-    account: document.getElementById('accountView')
-  };
-
-  const viewCopy = {
-    signup: {
-      subtitle: 'Create your private profile',
-      title: 'Food confidence starts here.'
-    },
-    signin: {
-      subtitle: 'Welcome back',
-      title: 'Sign in to SafePlate.'
-    },
-    forgot: {
-      subtitle: 'Account recovery',
-      title: 'Reset your password.'
-    },
-    recovery: {
-      subtitle: 'Password recovery',
-      title: 'Choose a new password.'
-    },
-    account: {
-      subtitle: 'Signed in',
-      title: 'Your SafePlate account.'
-    }
-  };
-
-  let currentUser = null;
-  let activeView = 'signup';
-
-  initValidation(authDialog);
-  initPasswordToggles(authDialog);
-
-  const setFeedback = (message = '', type = 'info') => {
-    if (!message) {
-      authFeedback.textContent = '';
-      authFeedback.hidden = true;
-      authFeedback.className = 'auth-feedback';
-      return;
-    }
-    authFeedback.textContent = message;
-    authFeedback.className = `auth-feedback ${type}`;
-    authFeedback.setAttribute('role', type === 'error' ? 'alert' : 'status');
-    authFeedback.hidden = false;
-  };
-
-  const setView = (view, { preserveFeedback = false } = {}) => {
-    activeView = view;
-    if (!preserveFeedback) setFeedback('');
-
-    const copy = viewCopy[view] || viewCopy.signup;
-    authSubtitle.textContent = copy.subtitle;
-    authTitle.textContent = copy.title;
-
-    Object.entries(forms).forEach(([key, el]) => {
-      if (!el) return;
-      el.hidden = key !== view;
-    });
-
-    if (view === 'account' && currentUser) {
-      const fullName = currentOverviewPrefs.fullName || currentUser.user_metadata?.full_name?.trim();
-      accountName.textContent = fullName || 'SafePlate member';
-      accountEmail.textContent = currentUser.email || '';
-      if (accountProtectSummary) {
-        accountProtectSummary.textContent = formatProtectionSummary(currentOverviewPrefs);
-      }
-    }
-  };
-
-  const openAuthModal = (preferredView) => {
-    const targetView = preferredView || (currentUser ? 'account' : 'signup');
-    setView(targetView);
-    if (!authDialog.open) {
-      authDialog.showModal();
-    }
-    const visibleForm = forms[targetView];
-    const firstInput = visibleForm?.querySelector('input:not([hidden])');
-    if (firstInput) firstInput.focus();
-  };
-
-  document.querySelectorAll('[data-open-auth]').forEach((trigger) => {
-    trigger.addEventListener('click', (e) => {
-      e.preventDefault();
-      openAuthModal(trigger.dataset.openAuth);
-    });
-  });
-
-  authDialog.querySelectorAll('[data-switch-view]').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      setView(btn.dataset.switchView);
-      const firstInput = forms[btn.dataset.switchView]?.querySelector('input');
-      if (firstInput) firstInput.focus();
-    });
-  });
-
-  authDialog.querySelectorAll('[data-close-dialog]').forEach((btn) => {
-    btn.addEventListener('click', () => authDialog.close());
-  });
-
-  authDialog.addEventListener('close', () => {
-    authDialog.returnValue = '';
-    setFeedback('');
-  });
-
-  if (!('closedBy' in HTMLDialogElement.prototype)) {
-    const outside = (e, dialog) => {
-      const r = dialog.getBoundingClientRect();
-      return e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom;
-    };
-    let pressedOutside = false;
-    authDialog.addEventListener('pointerdown', (e) => {
-      pressedOutside = outside(e, authDialog);
-    });
-    authDialog.addEventListener('pointerup', (e) => {
-      if (pressedOutside && outside(e, authDialog)) authDialog.close();
-    });
-  }
-
-  let activeProfileLoadSeq = 0;
+  let updateModalAccountView = () => {};
 
   const renderUserState = (user, prefsOverride = null) => {
     currentUser = user || null;
@@ -695,22 +590,18 @@
       if (authStatusText) authStatusText.textContent = `Signed in as ${displayName} · Profile active and protected`;
       if (authStatusDot) authStatusDot.classList.remove('idle');
       renderOverviewAllergens(currentUser, prefs);
-      if (activeView === 'account') {
-        accountName.textContent = prefs.fullName || 'SafePlate member';
-        accountEmail.textContent = currentUser.email || '';
-        if (accountProtectSummary) {
-          accountProtectSummary.textContent = formatProtectionSummary(prefs);
-        }
-      }
+      updateModalAccountView(currentUser, prefs);
     } else {
       if (signedOutActions) signedOutActions.hidden = false;
       if (signedInActions) signedInActions.hidden = true;
       if (accountLabel) accountLabel.textContent = '';
       if (authStatusText) authStatusText.textContent = 'Sign in or create a profile to save your protection';
       if (authStatusDot) authStatusDot.classList.add('idle');
-      if (accountProtectSummary) accountProtectSummary.textContent = '';
       renderOverviewAllergens(null, getUserPreferences(null));
+      updateModalAccountView(null, null);
     }
+
+    emitPreferencesChanged(currentOverviewPrefs, currentUser);
   };
 
   const syncUserFromDatabase = async (hintUser = null) => {
@@ -743,186 +634,382 @@
     renderUserState(user, prefs);
   };
 
-  const ensureClient = () => {
-    const configErr = getConfigErrorMessage();
-    if (configErr) {
-      setFeedback(configErr, 'error');
-      return null;
-    }
-    return sb;
+  window.SafePlateAuth = {
+    client: sb,
+    hasKey,
+    hasSdk,
+    DEFAULT_ALLERGENS,
+    normalizeAllergens,
+    readCachedPrefs,
+    writeCachedPrefs,
+    clearCachedPrefs,
+    getUserPreferences,
+    getCurrentUser: () => currentUser,
+    getCurrentPreferences: () => currentOverviewPrefs,
+    getActivePreferences,
+    onPreferencesChanged,
+    formatProtectionSummary,
+    loadUserAllergyProfile,
+    saveUserAllergyProfile,
+    syncProfileTable,
+    syncUserFromDatabase,
+    notifyAllergySync,
+    subscribeAllergySync,
+    initValidation,
+    initPasswordToggles,
+    getRedirectUrl,
+    setBusy,
+    getConfigErrorMessage,
+    createShieldSvg
   };
 
-  forms.signup.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const client = ensureClient();
-    if (!client) return;
+  // --- Auth dialog logic (optional: on pages with #signupModal) ---
+  const authDialog = document.getElementById('signupModal');
+  let activeView = 'signup';
+  let openAuthModal = () => {};
 
-    const fullName = document.getElementById('signupName').value.trim();
-    const email = document.getElementById('signupEmail').value.trim();
-    const password = document.getElementById('signupPassword').value;
-    const submitBtn = document.getElementById('signupSubmit');
+  if (authDialog) {
+    const authTitle = document.getElementById('authTitle');
+    const authSubtitle = document.getElementById('authSubtitle');
+    const authFeedback = document.getElementById('authFeedback');
+    const accountName = document.getElementById('accountName');
+    const accountEmail = document.getElementById('accountEmail');
+    const accountProtectSummary = document.getElementById('accountProtectSummary');
+    const signOutBtn = document.getElementById('signOutBtn');
 
-    setFeedback('');
-    setBusy(submitBtn, true, 'Creating account…');
-    try {
-      const redirectUrl = getRedirectUrl();
-      const nowIso = new Date().toISOString();
-      const initialAllergens = DEFAULT_ALLERGENS.map((item) => ({ ...item }));
-      const { data, error } = await client.auth.signUp({
-        email,
-        password,
-        options: {
-          data: {
-            full_name: fullName,
-            strict_mode: true,
-            trace_alerts: true,
-            allergens: initialAllergens,
-            allergy_updated_at: nowIso
-          },
-          ...(redirectUrl ? { emailRedirectTo: redirectUrl } : {})
-        }
+    const forms = {
+      signup: document.getElementById('signupForm'),
+      signin: document.getElementById('signinForm'),
+      forgot: document.getElementById('forgotForm'),
+      recovery: document.getElementById('recoveryForm'),
+      account: document.getElementById('accountView')
+    };
+
+    const viewCopy = {
+      signup: {
+        subtitle: 'Create your private profile',
+        title: 'Food confidence starts here.'
+      },
+      signin: {
+        subtitle: 'Welcome back',
+        title: 'Sign in to SafePlate.'
+      },
+      forgot: {
+        subtitle: 'Account recovery',
+        title: 'Reset your password.'
+      },
+      recovery: {
+        subtitle: 'Password recovery',
+        title: 'Choose a new password.'
+      },
+      account: {
+        subtitle: 'Signed in',
+        title: 'Your SafePlate account.'
+      }
+    };
+
+    initValidation(authDialog);
+    initPasswordToggles(authDialog);
+
+    const setFeedback = (message = '', type = 'info') => {
+      if (!authFeedback) return;
+      if (!message) {
+        authFeedback.textContent = '';
+        authFeedback.hidden = true;
+        authFeedback.className = 'auth-feedback';
+        return;
+      }
+      authFeedback.textContent = message;
+      authFeedback.className = `auth-feedback ${type}`;
+      authFeedback.setAttribute('role', type === 'error' ? 'alert' : 'status');
+      authFeedback.hidden = false;
+    };
+
+    const setView = (view, { preserveFeedback = false } = {}) => {
+      activeView = view;
+      if (!preserveFeedback) setFeedback('');
+
+      const copy = viewCopy[view] || viewCopy.signup;
+      if (authSubtitle) authSubtitle.textContent = copy.subtitle;
+      if (authTitle) authTitle.textContent = copy.title;
+
+      Object.entries(forms).forEach(([key, el]) => {
+        if (!el) return;
+        el.hidden = key !== view;
       });
 
-      if (error) {
-        setFeedback(error.message, 'error');
-        return;
+      if (view === 'account' && currentUser) {
+        const fullName = currentOverviewPrefs.fullName || currentUser.user_metadata?.full_name?.trim();
+        if (accountName) accountName.textContent = fullName || 'SafePlate member';
+        if (accountEmail) accountEmail.textContent = currentUser.email || '';
+        if (accountProtectSummary) {
+          accountProtectSummary.textContent = formatProtectionSummary(currentOverviewPrefs);
+        }
       }
+    };
 
-      if (data.session) {
-        await syncProfileTable(data.session.user, {
-          fullName,
-          strictMode: true,
-          traceAlerts: true,
-          allergens: initialAllergens,
-          updatedAt: nowIso
-        });
-        forms.signup.reset();
-        await syncUserFromDatabase(data.session.user);
-        setView('account', { preserveFeedback: true });
-        setFeedback('Account created and signed in.', 'success');
-      } else {
-        forms.signup.reset();
-        setView('signin', { preserveFeedback: true });
-        setFeedback(
-          'Account created! Check your inbox for the confirmation link, then sign in.',
-          'success'
-        );
+    updateModalAccountView = (user, prefs) => {
+      if (activeView === 'account') {
+        if (user && prefs) {
+          if (accountName) accountName.textContent = prefs.fullName || 'SafePlate member';
+          if (accountEmail) accountEmail.textContent = user.email || '';
+          if (accountProtectSummary) {
+            accountProtectSummary.textContent = formatProtectionSummary(prefs);
+          }
+        } else {
+          if (accountProtectSummary) accountProtectSummary.textContent = '';
+        }
       }
-    } catch (err) {
-      setFeedback(err?.message || 'Unable to create account right now.', 'error');
-    } finally {
-      setBusy(submitBtn, false);
+    };
+
+    openAuthModal = (preferredView) => {
+      const targetView = preferredView || (currentUser ? 'account' : 'signup');
+      setView(targetView);
+      if (!authDialog.open) {
+        authDialog.showModal();
+      }
+      const visibleForm = forms[targetView];
+      const firstInput = visibleForm?.querySelector('input:not([hidden])');
+      if (firstInput) firstInput.focus();
+    };
+
+    document.querySelectorAll('[data-open-auth]').forEach((trigger) => {
+      trigger.addEventListener('click', (e) => {
+        e.preventDefault();
+        openAuthModal(trigger.dataset.openAuth);
+      });
+    });
+
+    authDialog.querySelectorAll('[data-switch-view]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        setView(btn.dataset.switchView);
+        const firstInput = forms[btn.dataset.switchView]?.querySelector('input');
+        if (firstInput) firstInput.focus();
+      });
+    });
+
+    authDialog.querySelectorAll('[data-close-dialog]').forEach((btn) => {
+      btn.addEventListener('click', () => authDialog.close());
+    });
+
+    authDialog.addEventListener('close', () => {
+      authDialog.returnValue = '';
+      setFeedback('');
+    });
+
+    if (!('closedBy' in HTMLDialogElement.prototype)) {
+      const outside = (e, dialog) => {
+        const r = dialog.getBoundingClientRect();
+        return e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom;
+      };
+      let pressedOutside = false;
+      authDialog.addEventListener('pointerdown', (e) => {
+        pressedOutside = outside(e, authDialog);
+      });
+      authDialog.addEventListener('pointerup', (e) => {
+        if (pressedOutside && outside(e, authDialog)) authDialog.close();
+      });
     }
-  });
 
-  forms.signin.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const client = ensureClient();
-    if (!client) return;
-
-    const email = document.getElementById('signinEmail').value.trim();
-    const password = document.getElementById('signinPassword').value;
-    const submitBtn = document.getElementById('signinSubmit');
-
-    setFeedback('');
-    setBusy(submitBtn, true, 'Signing in…');
-    try {
-      const { data, error } = await client.auth.signInWithPassword({ email, password });
-      if (error) {
-        setFeedback(error.message, 'error');
-        return;
+    const ensureClient = () => {
+      const configErr = getConfigErrorMessage();
+      if (configErr) {
+        setFeedback(configErr, 'error');
+        return null;
       }
-      forms.signin.reset();
-      await syncUserFromDatabase(data.user);
-      authDialog.close();
-    } catch (err) {
-      setFeedback(err?.message || 'Unable to sign in right now.', 'error');
-    } finally {
-      setBusy(submitBtn, false);
+      return sb;
+    };
+
+    if (forms.signup) {
+      forms.signup.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const client = ensureClient();
+        if (!client) return;
+
+        const fullName = document.getElementById('signupName')?.value.trim() || '';
+        const email = document.getElementById('signupEmail')?.value.trim() || '';
+        const password = document.getElementById('signupPassword')?.value || '';
+        const submitBtn = document.getElementById('signupSubmit');
+
+        setFeedback('');
+        setBusy(submitBtn, true, 'Creating account…');
+        try {
+          const redirectUrl = getRedirectUrl();
+          const nowIso = new Date().toISOString();
+          const initialAllergens = DEFAULT_ALLERGENS.map((item) => ({ ...item }));
+          const { data, error } = await client.auth.signUp({
+            email,
+            password,
+            options: {
+              data: {
+                full_name: fullName,
+                strict_mode: true,
+                trace_alerts: true,
+                allergens: initialAllergens,
+                allergy_updated_at: nowIso
+              },
+              ...(redirectUrl ? { emailRedirectTo: redirectUrl } : {})
+            }
+          });
+
+          if (error) {
+            setFeedback(error.message, 'error');
+            return;
+          }
+
+          if (data.session) {
+            await syncProfileTable(data.session.user, {
+              fullName,
+              strictMode: true,
+              traceAlerts: true,
+              allergens: initialAllergens,
+              updatedAt: nowIso
+            });
+            forms.signup.reset();
+            await syncUserFromDatabase(data.session.user);
+            setView('account', { preserveFeedback: true });
+            setFeedback('Account created and signed in.', 'success');
+          } else {
+            forms.signup.reset();
+            setView('signin', { preserveFeedback: true });
+            setFeedback('Account created! Check your inbox for the confirmation link, then sign in.', 'success');
+          }
+        } catch (err) {
+          setFeedback(err?.message || 'Unable to create account right now.', 'error');
+        } finally {
+          setBusy(submitBtn, false);
+        }
+      });
     }
-  });
 
-  forms.forgot.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const client = ensureClient();
-    if (!client) return;
+    if (forms.signin) {
+      forms.signin.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const client = ensureClient();
+        if (!client) return;
 
-    const email = document.getElementById('forgotEmail').value.trim();
-    const submitBtn = document.getElementById('forgotSubmit');
+        const email = document.getElementById('signinEmail')?.value.trim() || '';
+        const password = document.getElementById('signinPassword')?.value || '';
+        const submitBtn = document.getElementById('signinSubmit');
 
-    setFeedback('');
-    setBusy(submitBtn, true, 'Sending reset link…');
-    try {
-      const redirectUrl = getRedirectUrl();
-      const { error } = await client.auth.resetPasswordForEmail(
-        email,
-        redirectUrl ? { redirectTo: redirectUrl } : undefined
-      );
-      if (error) {
-        setFeedback(error.message, 'error');
-        return;
-      }
-      forms.forgot.reset();
-      setFeedback('If an account exists for that email, a reset link has been sent.', 'success');
-    } catch (err) {
-      setFeedback(err?.message || 'Unable to send reset email right now.', 'error');
-    } finally {
-      setBusy(submitBtn, false);
+        setFeedback('');
+        setBusy(submitBtn, true, 'Signing in…');
+        try {
+          const { data, error } = await client.auth.signInWithPassword({ email, password });
+          if (error) {
+            setFeedback(error.message, 'error');
+            return;
+          }
+          forms.signin.reset();
+          await syncUserFromDatabase(data.user);
+          authDialog.close();
+        } catch (err) {
+          setFeedback(err?.message || 'Unable to sign in right now.', 'error');
+        } finally {
+          setBusy(submitBtn, false);
+        }
+      });
     }
-  });
 
-  forms.recovery.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const client = ensureClient();
-    if (!client) return;
+    if (forms.forgot) {
+      forms.forgot.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const client = ensureClient();
+        if (!client) return;
 
-    const password = document.getElementById('recoveryPassword').value;
-    const submitBtn = document.getElementById('recoverySubmit');
+        const email = document.getElementById('forgotEmail')?.value.trim() || '';
+        const submitBtn = document.getElementById('forgotSubmit');
 
-    setFeedback('');
-    setBusy(submitBtn, true, 'Updating password…');
-    try {
-      const { data, error } = await client.auth.updateUser({ password });
-      if (error) {
-        setFeedback(error.message, 'error');
-        return;
-      }
-      forms.recovery.reset();
-      renderUserState(data.user);
-      setView('account', { preserveFeedback: true });
-      setFeedback('Password updated successfully.', 'success');
-    } catch (err) {
-      setFeedback(err?.message || 'Unable to update password right now.', 'error');
-    } finally {
-      setBusy(submitBtn, false);
+        setFeedback('');
+        setBusy(submitBtn, true, 'Sending reset link…');
+        try {
+          const redirectUrl = getRedirectUrl();
+          const { error } = await client.auth.resetPasswordForEmail(
+            email,
+            redirectUrl ? { redirectTo: redirectUrl } : undefined
+          );
+          if (error) {
+            setFeedback(error.message, 'error');
+            return;
+          }
+          forms.forgot.reset();
+          setFeedback('If an account exists for that email, a reset link has been sent.', 'success');
+        } catch (err) {
+          setFeedback(err?.message || 'Unable to send reset email right now.', 'error');
+        } finally {
+          setBusy(submitBtn, false);
+        }
+      });
     }
-  });
 
-  signOutBtn.addEventListener('click', async () => {
-    const client = ensureClient();
-    if (!client) return;
+    if (forms.recovery) {
+      forms.recovery.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const client = ensureClient();
+        if (!client) return;
 
-    const prevUserId = currentUser?.id;
-    setFeedback('');
-    setBusy(signOutBtn, true, 'Signing out…');
-    try {
-      const { error } = await client.auth.signOut();
-      if (error) {
-        setFeedback(error.message, 'error');
-        return;
-      }
-      clearCachedPrefs(prevUserId);
-      renderUserState(null);
-      setView('signin', { preserveFeedback: true });
-      setFeedback('Signed out.', 'info');
-    } catch (err) {
-      setFeedback(err?.message || 'Unable to sign out right now.', 'error');
-    } finally {
-      setBusy(signOutBtn, false);
+        const password = document.getElementById('recoveryPassword')?.value || '';
+        const submitBtn = document.getElementById('recoverySubmit');
+
+        setFeedback('');
+        setBusy(submitBtn, true, 'Updating password…');
+        try {
+          const { data, error } = await client.auth.updateUser({ password });
+          if (error) {
+            setFeedback(error.message, 'error');
+            return;
+          }
+          forms.recovery.reset();
+          renderUserState(data.user);
+          setView('account', { preserveFeedback: true });
+          setFeedback('Password updated successfully.', 'success');
+        } catch (err) {
+          setFeedback(err?.message || 'Unable to update password right now.', 'error');
+        } finally {
+          setBusy(submitBtn, false);
+        }
+      });
     }
-  });
 
-  renderUserState(null);
+    if (signOutBtn) {
+      signOutBtn.addEventListener('click', async () => {
+        const client = ensureClient();
+        if (!client) return;
+
+        const prevUserId = currentUser?.id;
+        setFeedback('');
+        setBusy(signOutBtn, true, 'Signing out…');
+        try {
+          const { error } = await client.auth.signOut();
+          if (error) {
+            setFeedback(error.message, 'error');
+            return;
+          }
+          clearCachedPrefs(prevUserId);
+          renderUserState(null);
+          setView('signin', { preserveFeedback: true });
+          setFeedback('Signed out.', 'info');
+        } catch (err) {
+          setFeedback(err?.message || 'Unable to sign out right now.', 'error');
+        } finally {
+          setBusy(signOutBtn, false);
+        }
+      });
+    }
+  }
+
+  // --- Session Bootstrapper & Reactive Database Sync ---
+  const initialActiveId = getCachedActiveUserId();
+  if (initialActiveId) {
+    const cached = readCachedPrefs(initialActiveId);
+    if (cached) {
+      currentOverviewPrefs = cached;
+      renderOverviewAllergens({ id: initialActiveId }, cached);
+    }
+  } else {
+    renderUserState(null);
+  }
+
   if (sb) {
     sb.auth.getSession().then(({ data }) => {
       const sessionUser = data?.session?.user || null;
@@ -942,9 +1029,9 @@
       } else {
         renderUserState(null);
       }
-      if (event === 'PASSWORD_RECOVERY') {
+      if (event === 'PASSWORD_RECOVERY' && typeof openAuthModal === 'function') {
         openAuthModal('recovery');
-      } else if (event === 'SIGNED_IN' && authDialog.open && activeView === 'signin') {
+      } else if (event === 'SIGNED_IN' && authDialog && authDialog.open && activeView === 'signin') {
         authDialog.close();
       }
     });
