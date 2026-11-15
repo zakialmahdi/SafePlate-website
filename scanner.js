@@ -791,13 +791,214 @@
     return '';
   };
 
-  const buildLocalAllergyAnswer = (question, userPrefs) => {
+  // Extract the core product, dish, or ingredient topic from a natural-language question
+  const extractSearchTopic = (question) => {
+    let topic = String(question || '')
+      .trim()
+      .replace(/[?!.]+$/g, '')
+      .replace(/^(hi|hello|hey)\s+/i, '')
+      .replace(/^(can\s+i\s+(eat|drink|have|consume|try)|is\s+it\s+safe\s+to\s+(eat|drink|have)|is|are|what\s+is\s+in|what's\s+in|what\s+are\s+the\s+ingredients\s+in|what\s+is|what\s+are|does|do|find\s+a|find\s+me\s+a|find|search\s+for|tell\s+me\s+about|check\s+if|check)\s+/i, '')
+      .replace(/\s+(safe\s+for\s+me|safe\s+to\s+eat|safe\s+for\s+my\s+allergies|safe|ok\s+for\s+me|okay\s+for\s+me|for\s+me|ingredients|allergens)$/i, '')
+      .replace(/^this\s+if\s+it\s+contains\s+/i, '')
+      .trim();
+
+    if (!topic || topic.length < 2) {
+      topic = String(question || '').trim().replace(/[?!.]+$/g, '');
+    }
+    return topic;
+  };
+
+  const fetchWithTimeout = async (url, options = {}, timeoutMs = 5500) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await fetch(url, { ...options, signal: controller.signal });
+      return response;
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
+  // Live Web & Food Database Scraper (OpenFoodFacts + Wikipedia + DuckDuckGo Instant Answer)
+  const scrapeWebForQuestion = async (question) => {
+    const topic = extractSearchTopic(question);
+    const scraped = {
+      topic,
+      products: [],
+      wikiTitle: '',
+      wikiExtract: '',
+       wikiUrl: '',
+      ddgAbstract: '',
+      ddgSource: ''
+    };
+
+    if (!topic || typeof fetch !== 'function') {
+      return scraped;
+    }
+
+    const cleanTag = (tag) => String(tag || '').replace(/^[a-z]{2}:/i, '').replace(/-/g, ' ').trim();
+
+    const offTask = (async () => {
+      try {
+        const offUrl = `https://world.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(topic)}&search_simple=1&action=process&json=1&page_size=6&fields=product_name,brands,ingredients_text,ingredients_text_en,allergens_tags,traces_tags,url`;
+        const res = await fetchWithTimeout(offUrl, {}, 6000);
+        if (!res.ok) return;
+        const data = await res.json();
+        const rawProducts = Array.isArray(data?.products) ? data.products : [];
+        scraped.products = rawProducts
+          .map((p) => {
+            const name = String(p.product_name || '').trim();
+            const brand = String(p.brands || '').split(',')[0].trim();
+            const ingredients = String(p.ingredients_text_en || p.ingredients_text || '').replace(/\s+/g, ' ').trim();
+            const allergens = Array.isArray(p.allergens_tags) ? p.allergens_tags.map(cleanTag).filter(Boolean) : [];
+            const traces = Array.isArray(p.traces_tags) ? p.traces_tags.map(cleanTag).filter(Boolean) : [];
+            return {
+              name,
+              brand,
+              ingredients,
+              allergens,
+              traces,
+              url: p.url || ''
+            };
+          })
+          .filter((p) => p.name && (p.ingredients || p.allergens.length > 0 || p.traces.length > 0))
+          .slice(0, 3);
+      } catch (_) {
+        // Ignore network/timeout errors on individual scraper source
+      }
+    })();
+
+    const wikiTask = (async () => {
+      try {
+        const searchUrl = `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(topic)}&utf8=1&format=json&origin=*&srlimit=2`;
+        const searchRes = await fetchWithTimeout(searchUrl, {}, 4500);
+        if (!searchRes.ok) return;
+        const searchData = await searchRes.json();
+        const firstHit = searchData?.query?.search?.[0];
+        if (!firstHit?.pageid) return;
+
+        const extractUrl = `https://en.wikipedia.org/w/api.php?action=query&prop=extracts&exintro=1&explaintext=1&pageids=${firstHit.pageid}&format=json&origin=*`;
+        const extractRes = await fetchWithTimeout(extractUrl, {}, 4500);
+        if (!extractRes.ok) return;
+        const extractData = await extractRes.json();
+        const pageObj = extractData?.query?.pages?.[firstHit.pageid];
+        const rawExtract = String(pageObj?.extract || '').replace(/\s+/g, ' ').trim();
+        if (rawExtract) {
+          scraped.wikiTitle = String(pageObj?.title || firstHit.title || '').trim();
+          scraped.wikiExtract = rawExtract.length > 520 ? `${rawExtract.slice(0, 520)}…` : rawExtract;
+          scraped.wikiUrl = `https://en.wikipedia.org/wiki/${encodeURIComponent(scraped.wikiTitle.replace(/ /g, '_'))}`;
+        }
+      } catch (_) {
+        // Ignore Wikipedia lookup error
+      }
+    })();
+
+    const ddgTask = (async () => {
+      try {
+        const ddgUrl = `https://api.duckduckgo.com/?q=${encodeURIComponent(topic)}&format=json&no_html=1&skip_disambig=1`;
+        const ddgRes = await fetchWithTimeout(ddgUrl, {}, 4000);
+        if (!ddgRes.ok) return;
+        const ddgData = await ddgRes.json();
+        const abstractText = String(ddgData?.AbstractText || '').trim();
+        if (abstractText) {
+          scraped.ddgAbstract = abstractText.length > 420 ? `${abstractText.slice(0, 420)}…` : abstractText;
+          scraped.ddgSource = String(ddgData?.AbstractURL || ddgData?.AbstractSource || '').trim();
+        }
+      } catch (_) {
+        // Ignore DuckDuckGo lookup error
+      }
+    })();
+
+    await Promise.allSettled([offTask, wikiTask, ddgTask]);
+    return scraped;
+  };
+
+  const formatScrapedWebContextForPrompt = (scraped) => {
+    if (!scraped) return '';
+    const sections = [];
+    if (scraped.wikiExtract) {
+      sections.push(`Wikipedia Summary (${scraped.wikiTitle}): ${scraped.wikiExtract}`);
+    } else if (scraped.ddgAbstract) {
+      sections.push(`Web Summary: ${scraped.ddgAbstract}`);
+    }
+    if (Array.isArray(scraped.products) && scraped.products.length > 0) {
+      const prodLines = scraped.products.map((p, idx) => {
+        const title = p.brand ? `${p.name} (${p.brand})` : p.name;
+        const ing = p.ingredients ? `Ingredients: ${p.ingredients}` : 'Ingredients not listed';
+        const alg = p.allergens.length > 0 ? ` | Declared Allergens: ${p.allergens.join(', ')}` : '';
+        const trc = p.traces.length > 0 ? ` | Facility Traces: ${p.traces.join(', ')}` : '';
+        return `${idx + 1}. ${title} — ${ing}${alg}${trc}`;
+      });
+      sections.push(`Live Scraped Product Labels (OpenFoodFacts):\n${prodLines.join('\n')}`);
+    }
+    return sections.join('\n\n');
+  };
+
+  const buildScrapedAllergyAnswer = (question, userPrefs, scraped) => {
     const q = String(question || '').trim();
-    const lowerQ = q.toLowerCase();
     const allergens = (userPrefs?.allergens || []).map((a) => a.name);
     const allergenListStr = allergens.length > 0 ? allergens.join(', ') : 'none currently listed';
     const modeStr = userPrefs?.strictMode ? 'Strict mode' : 'Standard mode';
+    const hasScrapedProducts = Array.isArray(scraped?.products) && scraped.products.length > 0;
+    const hasWebSummary = Boolean(scraped?.wikiExtract || scraped?.ddgAbstract);
 
+    if (hasScrapedProducts || hasWebSummary) {
+      const lines = [];
+      const topicLabel = scraped.topic || q;
+
+      // Combine all scraped text to evaluate against the user's database allergy profile
+      const combinedProductText = (scraped.products || [])
+        .map((p) => {
+          const tracePart = p.traces.length > 0 ? `. May contain traces of ${p.traces.join(', ')}` : '';
+          const algPart = p.allergens.length > 0 ? `. Contains ${p.allergens.join(', ')}` : '';
+          return `${p.name} ${p.ingredients}${algPart}${tracePart}`;
+        })
+        .join(' \n ');
+      const combinedText = `${q} ${scraped.wikiExtract || ''} ${scraped.ddgAbstract || ''} ${combinedProductText}`;
+      const overallAnalysis = analyzeIngredients(combinedText, userPrefs);
+
+      if (overallAnalysis.status === 'danger') {
+        const flaggedNames = overallAnalysis.detectedAllergens.filter((d) => !d.isTraceOnly).map((d) => d.name).join(', ');
+        lines.push(`⚠️ UNSAFE FOR YOUR PROFILE: Live web & product data for "${topicLabel}" flagged ${flaggedNames} (Tracked in your profile: ${allergenListStr} · ${modeStr}).`);
+      } else if (overallAnalysis.status === 'warning') {
+        const traceNames = overallAnalysis.detectedAllergens.map((d) => d.name).join(', ');
+        lines.push(`⚠️ CAUTION (SHARED EQUIPMENT / TRACE RISK): Live scraped data for "${topicLabel}" indicates potential trace or cross-contact with ${traceNames} (${allergenListStr} · ${modeStr}).`);
+      } else {
+        lines.push(`✅ NO DIRECT MATCH IN SCRAPED DATA: Based on live web results for "${topicLabel}", none of your tracked allergens (${allergenListStr} · ${modeStr}) were directly flagged, though recipes vary by brand.`);
+      }
+
+      if (hasWebSummary) {
+        const summaryText = scraped.wikiExtract || scraped.ddgAbstract;
+        const sourceTitle = scraped.wikiTitle ? `Wikipedia (${scraped.wikiTitle})` : 'Web Knowledge Base';
+        lines.push(`\n🌐 Web Overview (${sourceTitle}):\n${summaryText}`);
+      }
+
+      if (hasScrapedProducts) {
+        lines.push(`\n📦 Live Scraped Product Labels (OpenFoodFacts):`);
+        scraped.products.forEach((p) => {
+          const title = p.brand ? `${p.name} (${p.brand})` : p.name;
+          const prodCheckText = `${p.name} ${p.ingredients} ${p.allergens.length ? 'Contains ' + p.allergens.join(', ') : ''} ${p.traces.length ? 'May contain traces of ' + p.traces.join(', ') : ''}`;
+          const prodAnalysis = analyzeIngredients(prodCheckText, userPrefs);
+          let badge = '✅ Safe for profile';
+          if (prodAnalysis.status === 'danger') {
+            const hits = prodAnalysis.detectedAllergens.map((d) => `${d.name} (${d.hits.slice(0, 3).join(', ')})`).join('; ');
+            badge = `❌ Unsafe — Flagged: ${hits}`;
+          } else if (prodAnalysis.status === 'warning') {
+            const hits = prodAnalysis.detectedAllergens.map((d) => d.name).join(', ');
+            badge = `⚠️ Caution — Trace warning: ${hits}`;
+          }
+          const shortIng = p.ingredients
+            ? (p.ingredients.length > 180 ? `${p.ingredients.slice(0, 180)}…` : p.ingredients)
+            : (p.allergens.length ? `Allergens: ${p.allergens.join(', ')}` : 'Ingredients not listed');
+          lines.push(`• ${title}: ${badge}\n  Ingredients: ${shortIng}`);
+        });
+      }
+
+      return lines.join('\n');
+    }
+
+    // Fallback if offline or no web results matched
+    const lowerQ = q.toLowerCase();
     if (lowerQ.includes('oat milk')) {
       const hasGluten = allergens.some((a) => /wheat|gluten/i.test(a));
       const hasDairy = allergens.some((a) => /dairy|milk/i.test(a));
@@ -831,78 +1032,89 @@
     return `Based on your active SafePlate profile (${allergenListStr} · ${modeStr}), no direct matches for your tracked allergens were detected in "${q}". Always scan the full package ingredient list to check for hidden derivatives and shared-equipment warnings.`;
   };
 
-  const callGeminiAPI = async (historyArray, userPrefs) => {
+  const callGeminiAPI = async (historyArray, userPrefs, scrapedData) => {
     const apiKey = getGeminiApiKey();
+    const lastQuestion = historyArray[historyArray.length - 1]?.parts?.[0]?.text || '';
     if (!apiKey) {
-      const lastMsg = historyArray[historyArray.length - 1]?.parts?.[0]?.text || '';
-      return buildLocalAllergyAnswer(lastMsg, userPrefs);
+      return buildScrapedAllergyAnswer(lastQuestion, userPrefs, scrapedData);
     }
 
     const allergens = (userPrefs?.allergens || []).map((a) => `${a.name} (${a.severity || 'High'})`).join(', ') || 'none';
     const modeLabel = userPrefs?.strictMode ? 'strict mode (avoid all traces and hidden derivatives)' : 'standard mode';
     const traceLabel = userPrefs?.traceAlerts ? 'shared-equipment trace alerts enabled' : 'shared-equipment trace alerts disabled';
+    const webContextText = formatScrapedWebContextForPrompt(scrapedData);
 
     const model = 'gemini-3.5-flash-lite';
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+
+    const clonedHistory = historyArray.map((item, idx) => {
+      if (idx === historyArray.length - 1 && item.role === 'user' && webContextText) {
+        return {
+          role: 'user',
+          parts: [{
+            text: `${item.parts[0].text}\n\n[Live Web & OpenFoodFacts Scraped Context for this query:\n${webContextText}\nUse this live scraped ingredient data and Google Search to give a specific, accurate answer for the user's allergy profile.]`
+          }]
+        };
+      }
+      return item;
+    });
 
     let apiContents = [
       {
         role: 'user',
         parts: [{
-          text: `System: You are SafePlate AI. The user is allergic to: ${allergens}. Protection settings: ${modeLabel}, ${traceLabel}. Answer clearly and concisely. ALWAYS finish your sentences completely. Never leave a sentence hanging.`
+          text: `System: You are SafePlate AI. The user is allergic to: ${allergens}. Protection settings: ${modeLabel}, ${traceLabel}. Use live web/product ingredient data to answer clearly and concisely. ALWAYS finish your sentences completely. Never leave a sentence hanging.`
         }]
       },
       {
         role: 'model',
-        parts: [{ text: 'Understood. I will always provide complete sentences and concise answers tailored to the user allergy profile.' }]
+        parts: [{ text: 'Understood. I will use live web and product ingredient data to provide complete sentences and concise answers tailored to the user allergy profile.' }]
       },
-      ...historyArray
+      ...clonedHistory
     ];
 
     if (apiContents.length > 12) {
       apiContents = [apiContents[0], apiContents[1], ...apiContents.slice(-10)];
     }
 
-    for (let attempt = 0; attempt < 2; attempt++) {
+    // Try first with Google Search grounding tool enabled, then fallback to standard generateContent if the model/tier rejects tools
+    const payloads = [
+      {
+        contents: apiContents,
+        tools: [{ google_search: {} }],
+        generationConfig: { maxOutputTokens: 2048, temperature: 0.4 }
+      },
+      {
+        contents: apiContents,
+        generationConfig: { maxOutputTokens: 2048, temperature: 0.5 },
+        safetySettings: [
+          { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
+          { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
+          { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
+          { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' }
+        ]
+      }
+    ];
+
+    for (let pIdx = 0; pIdx < payloads.length; pIdx++) {
       try {
         const response = await fetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: apiContents,
-            generationConfig: {
-              maxOutputTokens: 2048,
-              temperature: 0.5
-            },
-            safetySettings: [
-              { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
-              { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
-              { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
-              { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' }
-            ]
-          })
+          body: JSON.stringify(payloads[pIdx])
         });
 
         const data = await response.json();
-        const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+        const text = data?.candidates?.[0]?.content?.parts?.map((pt) => pt.text || '').join('').trim();
         if (text) {
-          return text.trim();
-        }
-
-        if (data?.error) {
-          if (data.error.code === 503 && attempt === 0) {
-            await new Promise((resolve) => setTimeout(resolve, 1500));
-            continue;
-          }
-          break;
+          return text;
         }
       } catch (_) {
-        break;
+        // Continue to next payload or scraped web answer fallback
       }
     }
 
-    const lastQuestion = historyArray[historyArray.length - 1]?.parts?.[0]?.text || '';
-    return buildLocalAllergyAnswer(lastQuestion, userPrefs);
+    return buildScrapedAllergyAnswer(lastQuestion, userPrefs, scrapedData);
   };
 
   const appendChatMessage = (text, isUser) => {
@@ -934,11 +1146,15 @@
     appendChatMessage(question, true);
     chatHistory.push({ role: 'user', parts: [{ text: question }] });
 
-    const loadingDiv = appendChatMessage('Thinking...', false);
+    const searchTopic = extractSearchTopic(question);
+    const loadingDiv = appendChatMessage(`Searching the web & ingredient databases for "${searchTopic}"…`, false);
 
     try {
-      const userPrefs = await getActiveUserPrefsAsync();
-      const answer = await callGeminiAPI(chatHistory, userPrefs);
+      const [userPrefs, scrapedData] = await Promise.all([
+        getActiveUserPrefsAsync(),
+        scrapeWebForQuestion(question)
+      ]);
+      const answer = await callGeminiAPI(chatHistory, userPrefs, scrapedData);
       chatHistory.push({ role: 'model', parts: [{ text: answer }] });
 
       if (loadingDiv) {
