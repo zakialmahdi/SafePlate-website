@@ -768,6 +768,228 @@
     observer.observe(scanModal, { attributes: true, attributeFilter: ['class'] });
   }
 
+  // --- SafePlate AI ("Ask SafePlate") Gemini Chat Integration ---
+  const aiChipsContainer = document.getElementById('aiChips');
+  const aiAskForm = document.getElementById('aiAskForm');
+  const aiAskInput = document.getElementById('aiAskInput');
+  const aiSendBtn = document.getElementById('aiSendBtn');
+  const aiResponseBox = document.getElementById('aiResponseBox');
+  const aiResponseText = document.getElementById('aiResponseText');
+  const aiCloseResponseBtn = document.getElementById('aiCloseResponseBtn');
+  const chatMessages = document.getElementById('chatMessages');
+
+  let chatHistory = [];
+
+  const getGeminiApiKey = () => {
+    if (typeof window.GEMINI_API_KEY === 'string' && window.GEMINI_API_KEY.trim()) {
+      return window.GEMINI_API_KEY.trim();
+    }
+    if (typeof GEMINI_API_KEY === 'string' && GEMINI_API_KEY.trim()) {
+      return GEMINI_API_KEY.trim();
+    }
+    return '';
+  };
+
+  const buildLocalAllergyAnswer = (question, userPrefs) => {
+    const q = String(question || '').trim();
+    const lowerQ = q.toLowerCase();
+    const allergens = (userPrefs?.allergens || []).map((a) => a.name);
+    const allergenListStr = allergens.length > 0 ? allergens.join(', ') : 'none currently listed';
+    const modeStr = userPrefs?.strictMode ? 'Strict mode' : 'Standard mode';
+
+    if (lowerQ.includes('oat milk')) {
+      const hasGluten = allergens.some((a) => /wheat|gluten/i.test(a));
+      const hasDairy = allergens.some((a) => /dairy|milk/i.test(a));
+      if (hasGluten) {
+        return `Oat milk is naturally dairy-free, which is great if you avoid dairy. However, because your profile tracks Wheat / Gluten (${modeStr}), only choose certified gluten-free oat milk—standard oats are frequently cross-contaminated with wheat, barley, or rye during harvesting and processing.`;
+      }
+      if (hasDairy) {
+        return `Yes—pure oat milk is plant-based and free from dairy proteins (whey and casein), making it a safe alternative for your Dairy profile (${modeStr}). Still check the label for facility warnings if shared equipment alerts are enabled.`;
+      }
+      return `Oat milk is free of dairy, peanuts, and tree nuts. Based on your tracked allergens (${allergenListStr}), plain oat milk is generally safe—just verify certified gluten-free status if you avoid gluten.`;
+    }
+
+    if (lowerQ.includes('sodium caseinate') || lowerQ.includes('casein') || lowerQ.includes('whey')) {
+      const hasDairy = allergens.some((a) => /dairy|milk/i.test(a));
+      if (hasDairy) {
+        return `Avoid this ingredient. Sodium caseinate and whey are milk-derived proteins. Because Dairy is in your tracked allergens (${modeStr}), products containing sodium caseinate, casein, or whey are unsafe for you.`;
+      }
+      return `Sodium caseinate is a protein derivative made from cow's milk (casein). It is a hidden dairy allergen often found in non-dairy creamers, protein bars, and processed foods. Your profile currently tracks: ${allergenListStr}.`;
+    }
+
+    if (lowerQ.includes('granola') || lowerQ.includes('nut-free')) {
+      return `When looking for a safe granola for your profile (${allergenListStr} · ${modeStr}), look for brands produced in a dedicated nut-free and allergen-safe facility (such as MadeGood, Enjoy Life, or Safe + Fair) and scan the ingredient label with SafePlate to verify there are no hidden derivatives or shared-equipment warnings.`;
+    }
+
+    const analysis = analyzeIngredients(q, userPrefs);
+    if (analysis.detectedAllergens.length > 0) {
+      const names = analysis.detectedAllergens.map((d) => d.name).join(', ');
+      return `Caution: Your question mentions terms associated with ${names}, which is flagged in your active profile (${allergenListStr} · ${modeStr}). Please avoid products containing ${names} or its derivatives.`;
+    }
+
+    return `Based on your active SafePlate profile (${allergenListStr} · ${modeStr}), no direct matches for your tracked allergens were detected in "${q}". Always scan the full package ingredient list to check for hidden derivatives and shared-equipment warnings.`;
+  };
+
+  const callGeminiAPI = async (historyArray, userPrefs) => {
+    const apiKey = getGeminiApiKey();
+    if (!apiKey) {
+      const lastMsg = historyArray[historyArray.length - 1]?.parts?.[0]?.text || '';
+      return buildLocalAllergyAnswer(lastMsg, userPrefs);
+    }
+
+    const allergens = (userPrefs?.allergens || []).map((a) => `${a.name} (${a.severity || 'High'})`).join(', ') || 'none';
+    const modeLabel = userPrefs?.strictMode ? 'strict mode (avoid all traces and hidden derivatives)' : 'standard mode';
+    const traceLabel = userPrefs?.traceAlerts ? 'shared-equipment trace alerts enabled' : 'shared-equipment trace alerts disabled';
+
+    const model = 'gemini-3.5-flash-lite';
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+
+    let apiContents = [
+      {
+        role: 'user',
+        parts: [{
+          text: `System: You are SafePlate AI. The user is allergic to: ${allergens}. Protection settings: ${modeLabel}, ${traceLabel}. Answer clearly and concisely. ALWAYS finish your sentences completely. Never leave a sentence hanging.`
+        }]
+      },
+      {
+        role: 'model',
+        parts: [{ text: 'Understood. I will always provide complete sentences and concise answers tailored to the user allergy profile.' }]
+      },
+      ...historyArray
+    ];
+
+    if (apiContents.length > 12) {
+      apiContents = [apiContents[0], apiContents[1], ...apiContents.slice(-10)];
+    }
+
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: apiContents,
+            generationConfig: {
+              maxOutputTokens: 2048,
+              temperature: 0.5
+            },
+            safetySettings: [
+              { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
+              { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
+              { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
+              { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' }
+            ]
+          })
+        });
+
+        const data = await response.json();
+        const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (text) {
+          return text.trim();
+        }
+
+        if (data?.error) {
+          if (data.error.code === 503 && attempt === 0) {
+            await new Promise((resolve) => setTimeout(resolve, 1500));
+            continue;
+          }
+          break;
+        }
+      } catch (_) {
+        break;
+      }
+    }
+
+    const lastQuestion = historyArray[historyArray.length - 1]?.parts?.[0]?.text || '';
+    return buildLocalAllergyAnswer(lastQuestion, userPrefs);
+  };
+
+  const appendChatMessage = (text, isUser) => {
+    if (!chatMessages) return null;
+    const div = document.createElement('div');
+    div.className = isUser ? 'chat-msg-user' : 'chat-msg-ai';
+    div.textContent = text;
+    chatMessages.append(div);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+    return div;
+  };
+
+  const handleAskQuestion = async (questionText) => {
+    const question = String(questionText || '').trim();
+    if (!question) return;
+
+    if (aiResponseBox) aiResponseBox.hidden = false;
+    if (aiAskInput) aiAskInput.value = '';
+    if (aiSendBtn) aiSendBtn.disabled = true;
+
+    appendChatMessage(question, true);
+    chatHistory.push({ role: 'user', parts: [{ text: question }] });
+
+    const loadingDiv = appendChatMessage('Thinking…', false);
+    if (aiResponseText) {
+      aiResponseText.textContent = 'Thinking…';
+    }
+
+    try {
+      const userPrefs = await getActiveUserPrefsAsync();
+      const answer = await callGeminiAPI(chatHistory, userPrefs);
+      chatHistory.push({ role: 'model', parts: [{ text: answer }] });
+
+      if (loadingDiv) {
+        loadingDiv.textContent = answer;
+      }
+      if (aiResponseText) {
+        aiResponseText.textContent = answer;
+      }
+      if (chatMessages) {
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+      }
+    } catch (err) {
+      const fallback = `Unable to reach SafePlate AI right now (${err?.message || 'error'}).`;
+      if (loadingDiv) loadingDiv.textContent = fallback;
+      if (aiResponseText) aiResponseText.textContent = fallback;
+    } finally {
+      if (aiSendBtn) aiSendBtn.disabled = false;
+    }
+  };
+
+  if (aiChipsContainer) {
+    aiChipsContainer.querySelectorAll('button').forEach((chip) => {
+      chip.addEventListener('click', () => {
+        const q = chip.dataset.question || chip.textContent || '';
+        handleAskQuestion(q);
+      });
+    });
+  }
+
+  if (aiAskForm) {
+    aiAskForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      if (!aiAskInput) return;
+      handleAskQuestion(aiAskInput.value);
+    });
+  }
+
+  if (aiCloseResponseBtn) {
+    aiCloseResponseBtn.addEventListener('click', () => {
+      if (aiResponseBox) aiResponseBox.hidden = true;
+      if (chatMessages) chatMessages.replaceChildren();
+      if (aiResponseText) aiResponseText.textContent = '';
+      chatHistory = [];
+    });
+  }
+
+  document.querySelectorAll('a[href="#askSafePlate"]').forEach((link) => {
+    link.addEventListener('click', (e) => {
+      const section = document.getElementById('askSafePlate');
+      if (section) {
+        e.preventDefault();
+        section.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        if (aiAskInput) setTimeout(() => aiAskInput.focus(), 300);
+      }
+    });
+  });
+
   // Initialize & subscribe to live profile updates
   updateModalProfileSummary();
   renderRecentScansUI();
@@ -799,6 +1021,7 @@
     getActiveUserPrefs,
     getActiveUserPrefsAsync,
     updateModalProfileSummary,
-    getRecentScans
+    getRecentScans,
+    askSafePlate: handleAskQuestion
   };
 })();

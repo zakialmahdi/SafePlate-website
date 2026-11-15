@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Fraunces:opsz,wght@9..144,600;9..144,700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=7">
+  <link rel="stylesheet" href="style.css?v=8">
 </head>
 <body>
 
@@ -154,7 +154,8 @@
           <span class="ai-response-badge">SafePlate Assistant</span>
           <button type="button" class="ai-close-btn" id="aiCloseResponseBtn" aria-label="Close response">✕</button>
         </div>
-        <p id="aiResponseText"></p>
+        <div class="chat-history" id="chatMessages"></div>
+        <p id="aiResponseText" hidden></p>
       </div>
     </section>
   </div>
@@ -386,7 +387,8 @@
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
-<script src="auth.js?v=7"></script>
-<script src="scanner.js?v=7"></script>
+<script src="config.js?v=8"></script>
+<script src="auth.js?v=8"></script>
+<script src="scanner.js?v=8"></script>
 </body>
 </html>
