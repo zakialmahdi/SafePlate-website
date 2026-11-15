@@ -793,19 +793,53 @@
 
   // Extract the core product, dish, or ingredient topic from a natural-language question
   const extractSearchTopic = (question) => {
-    let topic = String(question || '')
-      .trim()
-      .replace(/[?!.]+$/g, '')
-      .replace(/^(hi|hello|hey)\s+/i, '')
-      .replace(/^(can\s+i\s+(eat|drink|have|consume|try)|is\s+it\s+safe\s+to\s+(eat|drink|have)|is|are|what\s+is\s+in|what's\s+in|what\s+are\s+the\s+ingredients\s+in|what\s+is|what\s+are|does|do|find\s+a|find\s+me\s+a|find|search\s+for|tell\s+me\s+about|check\s+if|check)\s+/i, '')
-      .replace(/\s+(safe\s+for\s+me|safe\s+to\s+eat|safe\s+for\s+my\s+allergies|safe|ok\s+for\s+me|okay\s+for\s+me|for\s+me|ingredients|allergens)$/i, '')
-      .replace(/^this\s+if\s+it\s+contains\s+/i, '')
+    const raw = String(question || '').trim().replace(/[?!.]+$/g, '');
+    if (!raw) return '';
+
+    // 1. Check explicit patterns like "is there <allergen> in <food>" or "what can i substitute for <food>"
+    const inMatch = raw.match(/(?:is\s+there\s+(?:any\s+)?[\w\s/,-]+?\s+in|what(?:'s|\s+is|\s+are)\s+(?:the\s+ingredients\s+)?in|ingredients\s+(?:of|in|for)|substitute\s+for|alternative\s+(?:to|for)|replace)\s+(.+)$/i);
+    let topic = inMatch ? inMatch[1].trim() : raw;
+
+    // 2. Strip leading conversational question phrases (longest phrases first)
+    topic = topic
+      .replace(/^(hi|hello|hey|please|hey\s+safeplate|safeplate)\s*,?\s*/i, '')
+      .replace(/^(can\s+i\s+(?:safely\s+)?(?:eat|drink|have|consume|try|use)|is\s+it\s+(?:safe|ok|okay)\s+(?:for\s+me\s+)?to\s+(?:eat|drink|have|consume)|would\s+it\s+be\s+safe\s+to\s+(?:eat|drink|have)|what\s+are\s+the\s+ingredients\s+(?:in|of)|what\s+is\s+inside|what's\s+inside|what\s+is\s+in|what's\s+in|what\s+can\s+i\s+(?:use|eat)\s+instead\s+of|what\s+is\s+a\s+good\s+substitute\s+for|what\s+is\s+a|what\s+is|what\s+are|do\s+you\s+know\s+if|tell\s+me\s+about|tell\s+me\s+if|check\s+if|search\s+for|find\s+me\s+a|find\s+a|find|recommend\s+a|recommend|does|do|is|are)\s+/i, '')
+      .replace(/^this\s+if\s+it\s+(?:contains|has)\s+/i, '');
+
+    // 3. Strip trailing conditional / allergy clauses (e.g. "if I have a peanut allergy", "contain milk or peanuts", "safe for me")
+    topic = topic
+      .replace(/\s+(?:if\s+i\s+(?:am\s+allergic\s+to|have\s+a?\s*[\w\s/,-]*allerg\w+|avoid|can't\s+eat).*)$/i, '')
+      .replace(/\s+(?:with\s+(?:my|a|an)\s+[\w\s/,-]*allerg\w+.*)$/i, '')
+      .replace(/\s+(?:contain|contains|have|has)\s+(?:any\s+)?(?:milk|dairy|peanut|peanuts|tree\s+nuts|nuts|wheat|gluten|egg|eggs|soy|sesame|shellfish|fish|mustard|lactose|whey|casein|allergens|traces).*$/i, '')
+      .replace(/\s+(?:safe\s+for\s+me\s+to\s+(?:eat|drink|have)|safe\s+for\s+my\s+allergies|safe\s+for\s+me|safe\s+to\s+(?:eat|drink)|safe|ok\s+for\s+me|okay\s+for\s+me|for\s+my\s+profile|for\s+me|in\s+it|ingredients|allergens)$/i, '')
+      .replace(/^(?:the|a|an|some|any)\s+/i, '')
       .trim();
 
     if (!topic || topic.length < 2) {
-      topic = String(question || '').trim().replace(/[?!.]+$/g, '');
+      return raw;
     }
     return topic;
+  };
+
+  // Detect conversational intent so SafePlate AI understands non-label questions
+  const detectQuestionIntent = (question) => {
+    const q = String(question || '').trim().toLowerCase();
+    if (/^(hi|hello|hey|good\s+(morning|afternoon|evening)|how\s+are\s+you|who\s+are\s+you|what\s+can\s+you\s+do)\b/.test(q)) {
+      return 'greeting';
+    }
+    if (/\b(what\s+am\s+i\s+allergic\s+to|what\s+are\s+my\s+allerg(ies|ens)|my\s+allergy\s+profile|my\s+tracked\s+allerg(ies|ens)|which\s+allerg(ies|ens)\s+do\s+i\s+have)\b/.test(q)) {
+      return 'profile_check';
+    }
+    if (/\b(what\s+is\s+(strict\s+mode|shared\s+equipment|trace\s+alert)|how\s+does\s+(strict\s+mode|shared\s+equipment)\s+work)\b/.test(q)) {
+      return 'explain_mode';
+    }
+    if (/\b(substitute|alternative|replace|instead\s+of|swap\s+for)\b/.test(q)) {
+      return 'substitute';
+    }
+    if (/\b(find|recommend|suggest|what\s+snacks|safe\s+snacks|safe\s+brands|what\s+can\s+i\s+eat\s+for)\b/.test(q)) {
+      return 'recommendation';
+    }
+    return 'food_inquiry';
   };
 
   const fetchWithTimeout = async (url, options = {}, timeoutMs = 5500) => {
@@ -821,48 +855,62 @@
 
   // Live Web & Food Database Scraper (OpenFoodFacts + Wikipedia + DuckDuckGo Instant Answer)
   const scrapeWebForQuestion = async (question) => {
+    const intent = detectQuestionIntent(question);
     const topic = extractSearchTopic(question);
     const scraped = {
+      intent,
       topic,
       products: [],
       wikiTitle: '',
       wikiExtract: '',
-       wikiUrl: '',
+      wikiUrl: '',
       ddgAbstract: '',
       ddgSource: ''
     };
 
-    if (!topic || typeof fetch !== 'function') {
+    if (!topic || typeof fetch !== 'function' || intent === 'greeting' || intent === 'profile_check' || intent === 'explain_mode') {
       return scraped;
     }
 
     const cleanTag = (tag) => String(tag || '').replace(/^[a-z]{2}:/i, '').replace(/-/g, ' ').trim();
 
+    const queryOpenFoodFacts = async (searchQuery) => {
+      const offUrl = `https://world.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(searchQuery)}&search_simple=1&action=process&json=1&page_size=6&fields=product_name,brands,ingredients_text,ingredients_text_en,allergens_tags,traces_tags,url`;
+      const res = await fetchWithTimeout(offUrl, {}, 5500);
+      if (!res.ok) return [];
+      const data = await res.json();
+      const rawProducts = Array.isArray(data?.products) ? data.products : [];
+      return rawProducts
+        .map((p) => {
+          const name = String(p.product_name || '').trim();
+          const brand = String(p.brands || '').split(',')[0].trim();
+          const ingredients = String(p.ingredients_text_en || p.ingredients_text || '').replace(/\s+/g, ' ').trim();
+          const allergens = Array.isArray(p.allergens_tags) ? p.allergens_tags.map(cleanTag).filter(Boolean) : [];
+          const traces = Array.isArray(p.traces_tags) ? p.traces_tags.map(cleanTag).filter(Boolean) : [];
+          return {
+            name,
+            brand,
+            ingredients,
+            allergens,
+            traces,
+            url: p.url || ''
+          };
+        })
+        .filter((p) => p.name && (p.ingredients || p.allergens.length > 0 || p.traces.length > 0));
+    };
+
     const offTask = (async () => {
       try {
-        const offUrl = `https://world.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(topic)}&search_simple=1&action=process&json=1&page_size=6&fields=product_name,brands,ingredients_text,ingredients_text_en,allergens_tags,traces_tags,url`;
-        const res = await fetchWithTimeout(offUrl, {}, 6000);
-        if (!res.ok) return;
-        const data = await res.json();
-        const rawProducts = Array.isArray(data?.products) ? data.products : [];
-        scraped.products = rawProducts
-          .map((p) => {
-            const name = String(p.product_name || '').trim();
-            const brand = String(p.brands || '').split(',')[0].trim();
-            const ingredients = String(p.ingredients_text_en || p.ingredients_text || '').replace(/\s+/g, ' ').trim();
-            const allergens = Array.isArray(p.allergens_tags) ? p.allergens_tags.map(cleanTag).filter(Boolean) : [];
-            const traces = Array.isArray(p.traces_tags) ? p.traces_tags.map(cleanTag).filter(Boolean) : [];
-            return {
-              name,
-              brand,
-              ingredients,
-              allergens,
-              traces,
-              url: p.url || ''
-            };
-          })
-          .filter((p) => p.name && (p.ingredients || p.allergens.length > 0 || p.traces.length > 0))
-          .slice(0, 3);
+        let found = await queryOpenFoodFacts(topic);
+        // If a multi-word phrase like "nut-free granola" returns 0 products, retry with the core food noun ("granola")
+        if (found.length === 0 && topic.includes(' ')) {
+          const words = topic.split(/\s+/).filter((w) => w.length > 2 && !/^(free|safe|best|good|healthy|without|no|low|high|organic|vegan|brand|brands|snack|snacks|food|foods)$/i.test(w));
+          const fallbackTerm = words[words.length - 1] || '';
+          if (fallbackTerm && fallbackTerm.toLowerCase() !== topic.toLowerCase()) {
+            found = await queryOpenFoodFacts(fallbackTerm);
+          }
+        }
+        scraped.products = found.slice(0, 4);
       } catch (_) {
         // Ignore network/timeout errors on individual scraper source
       }
@@ -936,9 +984,53 @@
 
   const buildScrapedAllergyAnswer = (question, userPrefs, scraped) => {
     const q = String(question || '').trim();
+    const lowerQ = q.toLowerCase();
+    const intent = scraped?.intent || detectQuestionIntent(q);
     const allergens = (userPrefs?.allergens || []).map((a) => a.name);
     const allergenListStr = allergens.length > 0 ? allergens.join(', ') : 'none currently listed';
     const modeStr = userPrefs?.strictMode ? 'Strict mode' : 'Standard mode';
+    const traceStr = userPrefs?.traceAlerts ? 'Enabled' : 'Disabled';
+
+    // 1. Conversational Greeting / Help intent
+    if (intent === 'greeting') {
+      return `Hi! I'm SafePlate AI. Your active profile is currently protecting you from: ${allergenListStr} (${modeStr} · Shared Equipment Alerts: ${traceStr}).\n\nYou can ask me:\n• Whether a food, dish, or brand is safe (e.g., "Can I eat Oreo?", "Is there dairy in carbonara?")\n• What an unfamiliar ingredient means (e.g., "What is sodium caseinate?")\n• Safe substitutes or product recommendations (e.g., "What can I substitute for butter?", "Find a nut-free granola")`;
+    }
+
+    // 2. Profile / Allergies check intent
+    if (intent === 'profile_check') {
+      const detailed = (userPrefs?.allergens || [])
+        .map((a) => `• ${a.name} (${a.severity || 'High'} — ${a.note || 'Tracked'})`)
+        .join('\n');
+      return `Here is your active SafePlate protection profile:\n${detailed || '• No allergens currently listed'}\n\n• Protection Mode: ${modeStr}\n• Shared Equipment / Trace Alerts: ${traceStr}\n\nYou can update these anytime in Profile Settings.`;
+    }
+
+    // 3. Explain Strict Mode / Shared Equipment Alert intent
+    if (intent === 'explain_mode') {
+      return `Here is how SafePlate protection modes work:\n• Strict Mode (${userPrefs?.strictMode ? 'Currently ON' : 'Currently OFF'}): Flags hidden chemical derivatives (such as whey, casein, or arachis oil) as well as precautionary cross-contact warnings.\n• Shared Equipment Alerts (${traceStr}): Flags "May contain traces of..." or "Manufactured on shared equipment with..." advisory statements on food labels.`;
+    }
+
+    // 4. Ingredient Substitution intent
+    if (intent === 'substitute') {
+      const topic = (scraped?.topic || q).toLowerCase();
+      if (/milk|dairy|cream|butter|cheese|yogurt|whey/.test(topic)) {
+        const hasNutAllergy = allergens.some((a) => /peanut|nut/i.test(a));
+        const hasSoyAllergy = allergens.some((a) => /soy/i.test(a));
+        const safeMilks = ['Oat milk (certified gluten-free if needed)', 'Rice milk', 'Coconut milk'];
+        if (!hasSoyAllergy) safeMilks.push('Soy milk');
+        if (!hasNutAllergy) safeMilks.push('Almond or cashew milk');
+        return `Safe dairy substitutes for your profile (${allergenListStr} · ${modeStr}):\n• For milk/cream: ${safeMilks.join(', ')}\n• For butter in baking/cooking: Olive oil, coconut oil, applesauce, or plant-based vegan butter sticks (check label for ${hasSoyAllergy ? 'soy/' : ''}${hasNutAllergy ? 'nut ' : ''}allergens).`;
+      }
+      if (/peanut|nut|almond/.test(topic)) {
+        return `Safe nut-free substitutes for your profile (${allergenListStr} · ${modeStr}):\n• For peanut/nut butter: Sunflower seed butter (SunButter), pumpkin seed butter, soy butter (WowButter), or tahini (if you don't avoid sesame).\n• For crunch in baking/salads: Roasted pumpkin seeds (pepitas), sunflower seeds, or crispy toasted oats.`;
+      }
+      if (/wheat|flour|gluten|bread|pasta/.test(topic)) {
+        return `Safe gluten/wheat substitutes for your profile (${allergenListStr} · ${modeStr}):\n• For wheat flour: 1-to-1 gluten-free baking flour (rice, sorghum, and tapioca blend), oat flour, or cassava flour.\n• For pasta/noodles: Rice noodles, chickpea/lentil pasta, or 100% buckwheat soba.`;
+      }
+      if (/egg/.test(topic)) {
+        return `Safe egg substitutes for baking & cooking (${allergenListStr} · ${modeStr}):\n• 1 tbsp ground flaxseed or chia seeds + 3 tbsp water (flax egg)\n• 1/4 cup unsweetened applesauce or mashed banana per egg\n• Aquafaba (3 tbsp liquid from canned chickpeas per egg).`;
+      }
+    }
+
     const hasScrapedProducts = Array.isArray(scraped?.products) && scraped.products.length > 0;
     const hasWebSummary = Boolean(scraped?.wikiExtract || scraped?.ddgAbstract);
 
@@ -946,25 +1038,46 @@
       const lines = [];
       const topicLabel = scraped.topic || q;
 
-      // Combine all scraped text to evaluate against the user's database allergy profile
-      const combinedProductText = (scraped.products || [])
-        .map((p) => {
-          const tracePart = p.traces.length > 0 ? `. May contain traces of ${p.traces.join(', ')}` : '';
-          const algPart = p.allergens.length > 0 ? `. Contains ${p.allergens.join(', ')}` : '';
-          return `${p.name} ${p.ingredients}${algPart}${tracePart}`;
-        })
-        .join(' \n ');
-      const combinedText = `${q} ${scraped.wikiExtract || ''} ${scraped.ddgAbstract || ''} ${combinedProductText}`;
-      const overallAnalysis = analyzeIngredients(combinedText, userPrefs);
+      // Evaluate each scraped product individually so safe vs unsafe products are clearly distinguished
+      const evaluatedProducts = (scraped.products || []).map((p) => {
+        const title = p.brand ? `${p.name} (${p.brand})` : p.name;
+        const prodCheckText = `${p.name} ${p.ingredients} ${p.allergens.length ? 'Contains ' + p.allergens.join(', ') : ''} ${p.traces.length ? 'May contain traces of ' + p.traces.join(', ') : ''}`;
+        const prodAnalysis = analyzeIngredients(prodCheckText, userPrefs);
+        return { product: p, title, analysis: prodAnalysis };
+      });
 
-      if (overallAnalysis.status === 'danger') {
-        const flaggedNames = overallAnalysis.detectedAllergens.filter((d) => !d.isTraceOnly).map((d) => d.name).join(', ');
-        lines.push(`⚠️ UNSAFE FOR YOUR PROFILE: Live web & product data for "${topicLabel}" flagged ${flaggedNames} (Tracked in your profile: ${allergenListStr} · ${modeStr}).`);
-      } else if (overallAnalysis.status === 'warning') {
-        const traceNames = overallAnalysis.detectedAllergens.map((d) => d.name).join(', ');
-        lines.push(`⚠️ CAUTION (SHARED EQUIPMENT / TRACE RISK): Live scraped data for "${topicLabel}" indicates potential trace or cross-contact with ${traceNames} (${allergenListStr} · ${modeStr}).`);
-      } else {
-        lines.push(`✅ NO DIRECT MATCH IN SCRAPED DATA: Based on live web results for "${topicLabel}", none of your tracked allergens (${allergenListStr} · ${modeStr}) were directly flagged, though recipes vary by brand.`);
+      const unsafeProducts = evaluatedProducts.filter((ep) => ep.analysis.status === 'danger');
+      const warningProducts = evaluatedProducts.filter((ep) => ep.analysis.status === 'warning');
+      const safeProducts = evaluatedProducts.filter((ep) => ep.analysis.status === 'safe');
+
+      if (intent === 'recommendation' && evaluatedProducts.length > 0) {
+        lines.push(`🔎 Web Search Results for "${topicLabel}" (Filtered for your profile: ${allergenListStr} · ${modeStr}):`);
+        if (safeProducts.length > 0) {
+          lines.push(`✅ Found ${safeProducts.length} matching product(s) with no flagged allergens in their listed ingredients.`);
+        } else {
+          lines.push(`⚠️ Note: The top commercial products scraped for "${topicLabel}" contain or may contain your tracked allergens. See breakdown below.`);
+        }
+      } else if (evaluatedProducts.length > 0) {
+        if (unsafeProducts.length > 0 && safeProducts.length === 0) {
+          const flaggedNames = Array.from(new Set(unsafeProducts.flatMap((ep) => ep.analysis.detectedAllergens.map((d) => d.name)))).join(', ');
+          lines.push(`⚠️ UNSAFE FOR YOUR PROFILE: Live scraped product labels for "${topicLabel}" contain ${flaggedNames} (Tracked in your profile: ${allergenListStr} · ${modeStr}).`);
+        } else if (unsafeProducts.length > 0 && safeProducts.length > 0) {
+          const flaggedNames = Array.from(new Set(unsafeProducts.flatMap((ep) => ep.analysis.detectedAllergens.map((d) => d.name)))).join(', ');
+          lines.push(`⚠️ DEPENDS ON BRAND / RECIPE: Some "${topicLabel}" products contain ${flaggedNames}, while others appear free of your tracked allergens (${allergenListStr} · ${modeStr}).`);
+        } else if (warningProducts.length > 0) {
+          const traceNames = Array.from(new Set(warningProducts.flatMap((ep) => ep.analysis.detectedAllergens.map((d) => d.name)))).join(', ');
+          lines.push(`⚠️ CAUTION (SHARED EQUIPMENT / TRACE RISK): Scraped labels for "${topicLabel}" list potential trace or cross-contact with ${traceNames} (${allergenListStr} · ${modeStr}).`);
+        } else {
+          lines.push(`✅ SAFE BASED ON SCRAPED LABELS: None of your tracked allergens (${allergenListStr} · ${modeStr}) were flagged in the scraped product labels for "${topicLabel}".`);
+        }
+      } else if (hasWebSummary) {
+        const wikiAnalysis = analyzeIngredients(`${q} ${scraped.wikiExtract || ''} ${scraped.ddgAbstract || ''}`, userPrefs);
+        if (wikiAnalysis.status === 'danger') {
+          const flaggedNames = wikiAnalysis.detectedAllergens.map((d) => d.name).join(', ');
+          lines.push(`⚠️ UNSAFE FOR YOUR PROFILE: Web data for "${topicLabel}" mentions ${flaggedNames}, which conflicts with your profile (${allergenListStr} · ${modeStr}).`);
+        } else {
+          lines.push(`✅ OVERVIEW FOR "${topicLabel.toUpperCase()}" (Profile: ${allergenListStr} · ${modeStr}):`);
+        }
       }
 
       if (hasWebSummary) {
@@ -973,12 +1086,9 @@
         lines.push(`\n🌐 Web Overview (${sourceTitle}):\n${summaryText}`);
       }
 
-      if (hasScrapedProducts) {
+      if (evaluatedProducts.length > 0) {
         lines.push(`\n📦 Live Scraped Product Labels (OpenFoodFacts):`);
-        scraped.products.forEach((p) => {
-          const title = p.brand ? `${p.name} (${p.brand})` : p.name;
-          const prodCheckText = `${p.name} ${p.ingredients} ${p.allergens.length ? 'Contains ' + p.allergens.join(', ') : ''} ${p.traces.length ? 'May contain traces of ' + p.traces.join(', ') : ''}`;
-          const prodAnalysis = analyzeIngredients(prodCheckText, userPrefs);
+        evaluatedProducts.forEach(({ product: p, title, analysis: prodAnalysis }) => {
           let badge = '✅ Safe for profile';
           if (prodAnalysis.status === 'danger') {
             const hits = prodAnalysis.detectedAllergens.map((d) => `${d.name} (${d.hits.slice(0, 3).join(', ')})`).join('; ');
@@ -998,7 +1108,6 @@
     }
 
     // Fallback if offline or no web results matched
-    const lowerQ = q.toLowerCase();
     if (lowerQ.includes('oat milk')) {
       const hasGluten = allergens.some((a) => /wheat|gluten/i.test(a));
       const hasDairy = allergens.some((a) => /dairy|milk/i.test(a));
@@ -1026,92 +1135,111 @@
     const analysis = analyzeIngredients(q, userPrefs);
     if (analysis.detectedAllergens.length > 0) {
       const names = analysis.detectedAllergens.map((d) => d.name).join(', ');
-      return `Caution: Your question mentions terms associated with ${names}, which is flagged in your active profile (${allergenListStr} · ${modeStr}). Please avoid products containing ${names} or its derivatives.`;
+      return `⚠️ Caution: "${ scraped?.topic || q }" is associated with ${names}, which is flagged in your active profile (${allergenListStr} · ${modeStr}). Please avoid products containing ${names} or its derivatives.`;
     }
 
-    return `Based on your active SafePlate profile (${allergenListStr} · ${modeStr}), no direct matches for your tracked allergens were detected in "${q}". Always scan the full package ingredient list to check for hidden derivatives and shared-equipment warnings.`;
+    return `I checked "${scraped?.topic || q}" against your active SafePlate profile (${allergenListStr} · ${modeStr}) and couldn't find a matching commercial food label online. Try asking with a specific food brand, dish name, or ingredient (for example: "Can I eat Oreo?", "What is soy lecithin?", or "What can I substitute for milk?").`;
   };
 
   const callGeminiAPI = async (historyArray, userPrefs, scrapedData) => {
     const apiKey = getGeminiApiKey();
     const lastQuestion = historyArray[historyArray.length - 1]?.parts?.[0]?.text || '';
-    if (!apiKey) {
-      return buildScrapedAllergyAnswer(lastQuestion, userPrefs, scrapedData);
-    }
-
     const allergens = (userPrefs?.allergens || []).map((a) => `${a.name} (${a.severity || 'High'})`).join(', ') || 'none';
     const modeLabel = userPrefs?.strictMode ? 'strict mode (avoid all traces and hidden derivatives)' : 'standard mode';
     const traceLabel = userPrefs?.traceAlerts ? 'shared-equipment trace alerts enabled' : 'shared-equipment trace alerts disabled';
     const webContextText = formatScrapedWebContextForPrompt(scrapedData);
 
-    const model = 'gemini-3.5-flash-lite';
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+    const systemInstructionText = `You are SafePlate AI, a helpful and knowledgeable food allergy and nutrition assistant. The user's active database profile tracks these allergies: ${allergens}. Protection settings: ${modeLabel}, ${traceLabel}. Answer the user's question directly, conversationally, and accurately. If live scraped product or Wikipedia data is provided, reference the real ingredients and explain clearly whether the food is safe, caution, or unsafe for their specific profile. Always finish your sentences completely.`;
 
     const clonedHistory = historyArray.map((item, idx) => {
       if (idx === historyArray.length - 1 && item.role === 'user' && webContextText) {
         return {
           role: 'user',
           parts: [{
-            text: `${item.parts[0].text}\n\n[Live Web & OpenFoodFacts Scraped Context for this query:\n${webContextText}\nUse this live scraped ingredient data and Google Search to give a specific, accurate answer for the user's allergy profile.]`
+            text: `User question: ${item.parts[0].text}\n\n[Live Web & OpenFoodFacts Scraped Data for "${scrapedData?.topic || ''}":\n${webContextText}\nUse this scraped ingredient data (and your food safety knowledge) to directly answer the user's question tailored to their allergies (${allergens}).]`
           }]
         };
       }
       return item;
     });
 
-    let apiContents = [
-      {
-        role: 'user',
-        parts: [{
-          text: `System: You are SafePlate AI. The user is allergic to: ${allergens}. Protection settings: ${modeLabel}, ${traceLabel}. Use live web/product ingredient data to answer clearly and concisely. ALWAYS finish your sentences completely. Never leave a sentence hanging.`
-        }]
-      },
-      {
-        role: 'model',
-        parts: [{ text: 'Understood. I will use live web and product ingredient data to provide complete sentences and concise answers tailored to the user allergy profile.' }]
-      },
-      ...clonedHistory
-    ];
+    if (apiKey) {
+      let apiContents = [
+        {
+          role: 'user',
+          parts: [{ text: `System: ${systemInstructionText}` }]
+        },
+        {
+          role: 'model',
+          parts: [{ text: 'Understood. I will answer the user question directly using the scraped ingredient data and their allergy profile.' }]
+        },
+        ...clonedHistory
+      ];
 
-    if (apiContents.length > 12) {
-      apiContents = [apiContents[0], apiContents[1], ...apiContents.slice(-10)];
+      if (apiContents.length > 12) {
+        apiContents = [apiContents[0], apiContents[1], ...apiContents.slice(-10)];
+      }
+
+      // Support both Google AI Studio keys (AIza...) and Vertex AI Express keys (AQ....)
+      const isVertexKey = apiKey.startsWith('AQ.');
+      const modelsToTry = ['gemini-3.5-flash-lite', 'gemini-2.5-flash'];
+      const endpoints = [];
+      for (const m of modelsToTry) {
+        if (isVertexKey) {
+          endpoints.push(`https://aiplatform.googleapis.com/v1/publishers/google/models/${m}:generateContent?key=${apiKey}`);
+        }
+        endpoints.push(`https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${apiKey}`);
+      }
+
+      for (const endpointUrl of endpoints) {
+        try {
+          const response = await fetchWithTimeout(endpointUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: apiContents,
+              generationConfig: { maxOutputTokens: 2048, temperature: 0.4 }
+            })
+          }, 6500);
+
+          const data = await response.json();
+          const text = data?.candidates?.[0]?.content?.parts?.map((pt) => pt.text || '').join('').trim();
+          if (text) {
+            return text;
+          }
+        } catch (_) {
+          // Try next endpoint
+        }
+      }
     }
 
-    // Try first with Google Search grounding tool enabled, then fallback to standard generateContent if the model/tier rejects tools
-    const payloads = [
-      {
-        contents: apiContents,
-        tools: [{ google_search: {} }],
-        generationConfig: { maxOutputTokens: 2048, temperature: 0.4 }
-      },
-      {
-        contents: apiContents,
-        generationConfig: { maxOutputTokens: 2048, temperature: 0.5 },
-        safetySettings: [
-          { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
-          { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
-          { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
-          { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' }
-        ]
-      }
-    ];
-
-    for (let pIdx = 0; pIdx < payloads.length; pIdx++) {
-      try {
-        const response = await fetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payloads[pIdx])
-        });
-
-        const data = await response.json();
-        const text = data?.candidates?.[0]?.content?.parts?.map((pt) => pt.text || '').join('').trim();
-        if (text) {
-          return text;
+    // Keyless conversational LLM fallback (Pollinations OpenAI-compatible endpoint) grounded with our live scraped data
+    try {
+      const openAiMessages = [
+        { role: 'system', content: systemInstructionText },
+        ...clonedHistory.slice(-6).map((m) => ({
+          role: m.role === 'model' ? 'assistant' : 'user',
+          content: m.parts?.[0]?.text || ''
+        }))
+      ];
+      const llmRes = await fetchWithTimeout('https://text.pollinations.ai/openai', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'openai',
+          messages: openAiMessages,
+          temperature: 0.4
+        })
+      }, 7500);
+      if (llmRes.ok) {
+        const llmData = await llmRes.json();
+        const reply = llmData?.choices?.[0]?.message?.content?.trim();
+        if (reply) {
+          return reply;
         }
-      } catch (_) {
-        // Continue to next payload or scraped web answer fallback
       }
+    } catch (_) {
+      // Fall back to structured scraped answer below
     }
 
     return buildScrapedAllergyAnswer(lastQuestion, userPrefs, scrapedData);
@@ -1146,8 +1274,12 @@
     appendChatMessage(question, true);
     chatHistory.push({ role: 'user', parts: [{ text: question }] });
 
+    const intent = detectQuestionIntent(question);
     const searchTopic = extractSearchTopic(question);
-    const loadingDiv = appendChatMessage(`Searching the web & ingredient databases for "${searchTopic}"…`, false);
+    const loadingMsg = (intent === 'greeting' || intent === 'profile_check' || intent === 'explain_mode')
+      ? 'Thinking…'
+      : `Searching the web & ingredient databases for "${searchTopic}"…`;
+    const loadingDiv = appendChatMessage(loadingMsg, false);
 
     try {
       const [userPrefs, scrapedData] = await Promise.all([
