@@ -769,13 +769,14 @@
   }
 
   // --- SafePlate AI ("Ask SafePlate") Gemini Chat Integration ---
-  const aiChipsContainer = document.getElementById('aiChips');
-  const aiAskForm = document.getElementById('aiAskForm');
-  const aiAskInput = document.getElementById('aiAskInput');
+  const homeChatChips = document.getElementById('homeChatChips');
+  const homeAskForm = document.getElementById('homeAskForm');
+  const homeAskInput = document.getElementById('homeAskInput');
+
+  const chatChips = document.getElementById('chatChips');
+  const askForm = document.getElementById('askForm');
+  const askInput = document.getElementById('askInput');
   const aiSendBtn = document.getElementById('aiSendBtn');
-  const aiResponseBox = document.getElementById('aiResponseBox');
-  const aiResponseText = document.getElementById('aiResponseText');
-  const aiCloseResponseBtn = document.getElementById('aiCloseResponseBtn');
   const chatMessages = document.getElementById('chatMessages');
 
   let chatHistory = [];
@@ -914,21 +915,26 @@
     return div;
   };
 
+  const switchToAskPage = () => {
+    if (typeof window.showPage === 'function') {
+      window.showPage('page-ask', document.getElementById('nav-ask'));
+    }
+  };
+
   const handleAskQuestion = async (questionText) => {
     const question = String(questionText || '').trim();
     if (!question) return;
 
-    if (aiResponseBox) aiResponseBox.hidden = false;
-    if (aiAskInput) aiAskInput.value = '';
+    switchToAskPage();
+
+    if (askInput) askInput.value = '';
+    if (homeAskInput) homeAskInput.value = '';
     if (aiSendBtn) aiSendBtn.disabled = true;
 
     appendChatMessage(question, true);
     chatHistory.push({ role: 'user', parts: [{ text: question }] });
 
-    const loadingDiv = appendChatMessage('Thinking…', false);
-    if (aiResponseText) {
-      aiResponseText.textContent = 'Thinking…';
-    }
+    const loadingDiv = appendChatMessage('Thinking...', false);
 
     try {
       const userPrefs = await getActiveUserPrefsAsync();
@@ -938,23 +944,20 @@
       if (loadingDiv) {
         loadingDiv.textContent = answer;
       }
-      if (aiResponseText) {
-        aiResponseText.textContent = answer;
-      }
       if (chatMessages) {
         chatMessages.scrollTop = chatMessages.scrollHeight;
       }
     } catch (err) {
       const fallback = `Unable to reach SafePlate AI right now (${err?.message || 'error'}).`;
       if (loadingDiv) loadingDiv.textContent = fallback;
-      if (aiResponseText) aiResponseText.textContent = fallback;
     } finally {
       if (aiSendBtn) aiSendBtn.disabled = false;
     }
   };
 
-  if (aiChipsContainer) {
-    aiChipsContainer.querySelectorAll('button').forEach((chip) => {
+  // Overview page AI launcher card (switches to full Ask SafePlate page and submits)
+  if (homeChatChips) {
+    homeChatChips.querySelectorAll('button').forEach((chip) => {
       chip.addEventListener('click', () => {
         const q = chip.dataset.question || chip.textContent || '';
         handleAskQuestion(q);
@@ -962,30 +965,37 @@
     });
   }
 
-  if (aiAskForm) {
-    aiAskForm.addEventListener('submit', (e) => {
+  if (homeAskForm) {
+    homeAskForm.addEventListener('submit', (e) => {
       e.preventDefault();
-      if (!aiAskInput) return;
-      handleAskQuestion(aiAskInput.value);
+      if (!homeAskInput) return;
+      handleAskQuestion(homeAskInput.value);
     });
   }
 
-  if (aiCloseResponseBtn) {
-    aiCloseResponseBtn.addEventListener('click', () => {
-      if (aiResponseBox) aiResponseBox.hidden = true;
-      if (chatMessages) chatMessages.replaceChildren();
-      if (aiResponseText) aiResponseText.textContent = '';
-      chatHistory = [];
+  // Dedicated Ask SafePlate AI full-page view
+  if (chatChips) {
+    chatChips.querySelectorAll('button').forEach((chip) => {
+      chip.addEventListener('click', () => {
+        const q = chip.dataset.question || chip.textContent || '';
+        handleAskQuestion(q);
+      });
+    });
+  }
+
+  if (askForm) {
+    askForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      if (!askInput) return;
+      handleAskQuestion(askInput.value);
     });
   }
 
   document.querySelectorAll('a[href="#askSafePlate"]').forEach((link) => {
     link.addEventListener('click', (e) => {
-      const section = document.getElementById('askSafePlate');
-      if (section) {
+      if (document.getElementById('page-ask')) {
         e.preventDefault();
-        section.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        if (aiAskInput) setTimeout(() => aiAskInput.focus(), 300);
+        switchToAskPage();
       }
     });
   });
