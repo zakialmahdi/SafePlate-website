@@ -175,8 +175,7 @@
     const count = prefs.allergens?.length || 0;
     const names = (prefs.allergens || []).map((a) => a.name).join(', ') || 'None';
     const mode = prefs.strictMode ? 'Strict mode active' : 'Standard mode';
-    const traceNote = prefs.traceAlerts ? ' · Trace alerts' : '';
-    scannerProfileText.textContent = `${count} tracked: ${names} · ${mode}${traceNote}`;
+    scannerProfileText.textContent = `${count} tracked: ${names} · ${mode}`;
   };
 
   // --- Camera Streaming ---

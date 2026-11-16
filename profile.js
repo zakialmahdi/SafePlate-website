@@ -49,7 +49,6 @@
   const allergySettingsFeedback = document.getElementById('allergySettingsFeedback');
   const allergySettingsForm = document.getElementById('allergySettingsForm');
   const strictModeInput = document.getElementById('strictModeInput');
-  const traceAlertsInput = document.getElementById('traceAlertsInput');
   const allergenPresets = document.getElementById('allergenPresets');
   const settingsAllergenList = document.getElementById('settingsAllergenList');
   const customAllergenName = document.getElementById('customAllergenName');
@@ -98,7 +97,7 @@
     profileProtectSummary.textContent = formatProtectionSummary({
       allergens: draftAllergens,
       strictMode: strictModeInput.checked,
-      traceAlerts: traceAlertsInput.checked
+      traceAlerts: strictModeInput.checked
     });
   };
 
@@ -224,7 +223,6 @@
 
     if (userChanged || !hasUnsavedDraft) {
       strictModeInput.checked = prefs.strictMode;
-      traceAlertsInput.checked = prefs.traceAlerts;
       draftAllergens = prefs.allergens.map((item) => ({ ...item }));
       renderAllergenEditor();
     }
@@ -275,11 +273,6 @@
 
   // --- Preset & Custom Allergen Interactions ---
   strictModeInput.addEventListener('change', () => {
-    hasUnsavedDraft = true;
-    updateSummaryPill();
-  });
-
-  traceAlertsInput.addEventListener('change', () => {
     hasUnsavedDraft = true;
     updateSummaryPill();
   });
@@ -434,7 +427,7 @@
       const saved = await saveUserAllergyProfile(currentUser, {
         fullName: getUserPreferences(currentUser).fullName,
         strictMode: strictModeInput.checked,
-        traceAlerts: traceAlertsInput.checked,
+        traceAlerts: strictModeInput.checked,
         allergens: cleanedAllergens
       });
 
