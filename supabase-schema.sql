@@ -98,3 +98,48 @@ create trigger on_auth_user_created
   after insert on auth.users
   for each row
   execute function private.handle_new_user();
+
+-- ============================================================================
+-- SafePlate AI Chat History Table (`public.ai_chat_messages`)
+-- Stores per-user conversation messages with Row-Level Security (RLS)
+-- ============================================================================
+
+create table if not exists public.ai_chat_messages (
+  id bigint generated always as identity primary key,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  role text not null check (role in ('user', 'model')),
+  content text not null,
+  created_at timestamptz not null default now()
+);
+
+-- Index foreign key + chronological ordering for fast per-user history queries and cascades
+create index if not exists ai_chat_messages_user_id_created_at_idx
+  on public.ai_chat_messages (user_id, created_at asc);
+
+alter table public.ai_chat_messages enable row level security;
+
+revoke all on table public.ai_chat_messages from anon, authenticated;
+grant select, insert, delete on table public.ai_chat_messages to authenticated;
+grant usage, select on sequence public.ai_chat_messages_id_seq to authenticated;
+
+drop policy if exists "Users can view their own AI chat messages" on public.ai_chat_messages;
+create policy "Users can view their own AI chat messages"
+  on public.ai_chat_messages
+  for select
+  to authenticated
+  using ((select auth.uid()) = user_id);
+
+drop policy if exists "Users can insert their own AI chat messages" on public.ai_chat_messages;
+create policy "Users can insert their own AI chat messages"
+  on public.ai_chat_messages
+  for insert
+  to authenticated
+  with check ((select auth.uid()) = user_id);
+
+drop policy if exists "Users can delete their own AI chat messages" on public.ai_chat_messages;
+create policy "Users can delete their own AI chat messages"
+  on public.ai_chat_messages
+  for delete
+  to authenticated
+  using ((select auth.uid()) = user_id);
+

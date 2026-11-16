@@ -777,8 +777,13 @@
   const askInput = document.getElementById('askInput');
   const aiSendBtn = document.getElementById('aiSendBtn');
   const chatMessages = document.getElementById('chatMessages');
+  const chatSyncDot = document.getElementById('chatSyncDot');
+  const chatSyncText = document.getElementById('chatSyncText');
+  const clearChatBtn = document.getElementById('clearChatBtn');
 
   let chatHistory = [];
+  let loadedChatUserKey = null;
+  const DEFAULT_AI_WELCOME = "Hi! I'm SafePlate AI. Ask me anything about food ingredients or your allergies.";
 
   const getGeminiApiKey = () => {
     try {
@@ -1278,6 +1283,56 @@
     return div;
   };
 
+  const renderChatHistoryMessages = (savedMessages = []) => {
+    if (!chatMessages) return;
+    chatMessages.replaceChildren();
+    appendChatMessage(DEFAULT_AI_WELCOME, false);
+    chatHistory = [];
+
+    if (Array.isArray(savedMessages)) {
+      savedMessages.forEach((m) => {
+        if (!m || !m.content) return;
+        const isUser = m.role === 'user';
+        appendChatMessage(m.content, isUser);
+        chatHistory.push({
+          role: isUser ? 'user' : 'model',
+          parts: [{ text: m.content }]
+        });
+      });
+    }
+  };
+
+  const hydrateChatHistoryForUser = async (userOverride = null, prefsOverride = null, force = false) => {
+    const auth = window.SafePlateAuth;
+    const user = userOverride !== undefined
+      ? userOverride
+      : (auth && typeof auth.getCurrentUser === 'function' ? auth.getCurrentUser() : null);
+    const userKey = user?.id || 'guest';
+
+    if (chatSyncDot && chatSyncText) {
+      if (user?.id) {
+        const displayName = prefsOverride?.fullName || user.user_metadata?.full_name || user.email || 'Account';
+        chatSyncDot.classList.remove('idle');
+        chatSyncText.textContent = `Chat history synced to your account (${displayName})`;
+      } else {
+        chatSyncDot.classList.add('idle');
+        chatSyncText.textContent = 'Sign in to save your AI chat history to your account';
+      }
+    }
+
+    if (!force && loadedChatUserKey === userKey) return;
+    loadedChatUserKey = userKey;
+
+    if (auth && typeof auth.loadUserChatHistory === 'function') {
+      try {
+        const saved = await auth.loadUserChatHistory(user);
+        if (loadedChatUserKey === userKey) {
+          renderChatHistoryMessages(saved);
+        }
+      } catch (_) {}
+    }
+  };
+
   const switchToAskPage = () => {
     if (typeof window.showPage === 'function') {
       window.showPage('page-ask', document.getElementById('nav-ask'));
@@ -1318,6 +1373,10 @@
       if (chatMessages) {
         chatMessages.scrollTop = chatMessages.scrollHeight;
       }
+
+      if (window.SafePlateAuth && typeof window.SafePlateAuth.saveUserChatMessagePair === 'function') {
+        window.SafePlateAuth.saveUserChatMessagePair(question, answer).catch(() => {});
+      }
     } catch (err) {
       const fallback = `Unable to reach SafePlate AI right now (${err?.message || 'error'}).`;
       if (loadingDiv) loadingDiv.textContent = fallback;
@@ -1325,6 +1384,15 @@
       if (aiSendBtn) aiSendBtn.disabled = false;
     }
   };
+
+  if (clearChatBtn) {
+    clearChatBtn.addEventListener('click', async () => {
+      if (window.SafePlateAuth && typeof window.SafePlateAuth.clearUserChatHistory === 'function') {
+        await window.SafePlateAuth.clearUserChatHistory();
+      }
+      renderChatHistoryMessages([]);
+    });
+  }
 
   // Overview page AI launcher card (switches to full Ask SafePlate page and submits)
   if (homeChatChips) {
@@ -1374,11 +1442,13 @@
   // Initialize & subscribe to live profile updates
   updateModalProfileSummary();
   renderRecentScansUI();
+  hydrateChatHistoryForUser(undefined, null, true);
 
   if (window.SafePlateAuth) {
     if (typeof window.SafePlateAuth.onPreferencesChanged === 'function') {
-      window.SafePlateAuth.onPreferencesChanged((prefs) => {
+      window.SafePlateAuth.onPreferencesChanged((prefs, user) => {
         updateModalProfileSummary(prefs);
+        hydrateChatHistoryForUser(user, prefs);
       });
     }
     if (typeof window.SafePlateAuth.subscribeAllergySync === 'function') {

@@ -158,9 +158,162 @@
   const formatProtectionSummary = (prefs) => {
     const count = prefs?.allergens?.length || 0;
     const modeLabel = prefs?.strictMode ? 'strict mode' : 'standard mode';
-    const parts = [`${count} ${count === 1 ? 'allergen' : 'allergens'}`, modeLabel];
-    if (prefs?.traceAlerts) parts.push('trace alerts');
-    return parts.join(' · ');
+    return `${count} ${count === 1 ? 'allergen' : 'allergens'} · ${modeLabel}`;
+  };
+
+  const CHAT_CACHE_PREFIX = 'safeplate_chat_';
+
+  const normalizeChatHistory = (items) => {
+    if (!Array.isArray(items)) return [];
+    return items
+      .filter((m) => m && (m.role === 'user' || m.role === 'model') && typeof m.content === 'string' && m.content.trim())
+      .map((m) => ({
+        role: m.role,
+        content: m.content.trim(),
+        created_at: m.created_at || new Date().toISOString()
+      }));
+  };
+
+  const readCachedChatHistory = (userId) => {
+    const key = `${CHAT_CACHE_PREFIX}${userId || 'guest'}`;
+    try {
+      const raw = window.localStorage.getItem(key);
+      if (!raw) return [];
+      return normalizeChatHistory(JSON.parse(raw));
+    } catch (_) {
+      return [];
+    }
+  };
+
+  const writeCachedChatHistory = (userId, messages) => {
+    const key = `${CHAT_CACHE_PREFIX}${userId || 'guest'}`;
+    try {
+      window.localStorage.setItem(key, JSON.stringify(normalizeChatHistory(messages).slice(-50)));
+    } catch (_) {}
+  };
+
+  const isMissingChatTableError = (err) => {
+    if (!err) return false;
+    const code = String(err.code || '');
+    const msg = String(err.message || '');
+    return code === 'PGRST205' || code === '42P01' || /schema cache|relation .*ai_chat_messages.* does not exist/i.test(msg);
+  };
+
+  const loadUserChatHistory = async (user = currentUser) => {
+    const activeUser = user || currentUser;
+    if (!activeUser?.id) {
+      return readCachedChatHistory('guest');
+    }
+
+    const cached = readCachedChatHistory(activeUser.id);
+    const metaMessages = normalizeChatHistory(activeUser.user_metadata?.ai_chat_history);
+
+    if (sb) {
+      try {
+        const { data, error } = await sb
+          .from('ai_chat_messages')
+          .select('id, role, content, created_at')
+          .eq('user_id', activeUser.id)
+          .order('created_at', { ascending: true })
+          .limit(100);
+
+        if (!error && Array.isArray(data)) {
+          if (data.length > 0) {
+            const normalized = normalizeChatHistory(data);
+            writeCachedChatHistory(activeUser.id, normalized);
+            return normalized;
+          }
+          // Backfill table if user has messages in user_metadata or local cache
+          const seed = metaMessages.length >= cached.length ? metaMessages : cached;
+          if (seed.length > 0) {
+            await sb.from('ai_chat_messages').insert(
+              seed.map((m) => ({
+                user_id: activeUser.id,
+                role: m.role,
+                content: m.content,
+                created_at: m.created_at || new Date().toISOString()
+              }))
+            );
+            writeCachedChatHistory(activeUser.id, seed);
+            return seed;
+          }
+          return [];
+        }
+      } catch (_) {}
+    }
+
+    const fallback = metaMessages.length >= cached.length ? metaMessages : cached;
+    writeCachedChatHistory(activeUser.id, fallback);
+    return fallback;
+  };
+
+  const saveUserChatMessagePair = async (userMessageText, aiMessageText, user = currentUser) => {
+    const activeUser = user || currentUser;
+    const nowUser = new Date().toISOString();
+    const nowAi = new Date(Date.now() + 1).toISOString();
+    const newEntries = [
+      { role: 'user', content: String(userMessageText || '').trim(), created_at: nowUser },
+      { role: 'model', content: String(aiMessageText || '').trim(), created_at: nowAi }
+    ].filter((m) => m.content);
+
+    if (newEntries.length === 0) return [];
+
+    if (!activeUser?.id) {
+      const guestHistory = [...readCachedChatHistory('guest'), ...newEntries].slice(-50);
+      writeCachedChatHistory('guest', guestHistory);
+      return guestHistory;
+    }
+
+    const updatedLocal = [...readCachedChatHistory(activeUser.id), ...newEntries].slice(-50);
+    writeCachedChatHistory(activeUser.id, updatedLocal);
+
+    if (sb) {
+      try {
+        const { error } = await sb.from('ai_chat_messages').insert(
+          newEntries.map((m) => ({
+            user_id: activeUser.id,
+            role: m.role,
+            content: m.content,
+            created_at: m.created_at
+          }))
+        );
+        if (error && isMissingChatTableError(error)) {
+          // Fallback to user_metadata if table hasn't been created yet
+          await sb.auth.updateUser({
+            data: {
+              ...(activeUser.user_metadata || {}),
+              ai_chat_history: updatedLocal.slice(-30)
+            }
+          });
+        }
+      } catch (_) {}
+    }
+
+    return updatedLocal;
+  };
+
+  const clearUserChatHistory = async (user = currentUser) => {
+    const activeUser = user || currentUser;
+    if (!activeUser?.id) {
+      writeCachedChatHistory('guest', []);
+      return;
+    }
+
+    writeCachedChatHistory(activeUser.id, []);
+
+    if (sb) {
+      try {
+        await sb.from('ai_chat_messages').delete().eq('user_id', activeUser.id);
+      } catch (_) {}
+      try {
+        await sb.auth.updateUser({
+          data: {
+            ...(activeUser.user_metadata || {}),
+            ai_chat_history: []
+          }
+        });
+      } catch (_) {}
+    }
   };
 
   const isMissingProfilesTableError = (err) => {
@@ -651,6 +804,11 @@
     formatProtectionSummary,
     loadUserAllergyProfile,
     saveUserAllergyProfile,
+    loadUserChatHistory,
+    saveUserChatMessagePair,
+    clearUserChatHistory,
+    readCachedChatHistory,
+    writeCachedChatHistory,
     syncProfileTable,
     syncUserFromDatabase,
     notifyAllergySync,
