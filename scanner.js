@@ -112,6 +112,8 @@
   const resultIconBadge = document.getElementById('resultIconBadge');
   const resultHeading = document.getElementById('resultHeading');
   const resultSubheading = document.getElementById('resultSubheading');
+  const resultAiSection = document.getElementById('resultAiSection');
+  const resultAiExplanation = document.getElementById('resultAiExplanation');
   const resultMatchesSection = document.getElementById('resultMatchesSection');
   const resultMatchesList = document.getElementById('resultMatchesList');
   const resultOcrText = document.getElementById('resultOcrText');
@@ -503,6 +505,9 @@
       analysis.confidence = confidence;
       analysis.labelName = labelName;
 
+      setProgress('Analyzing extracted ingredients with Gemini AI…', 92);
+      await analyzeLabelWithGemini(textResult, userPrefs, analysis);
+
       lastAnalysis = analysis;
       renderScanResult(analysis);
       saveToRecentHistory(analysis);
@@ -513,6 +518,96 @@
       hideProgress();
       isScanning = false;
     }
+  };
+
+  // --- Gemini AI Label Verification & Explanation ---
+  const buildFallbackLabelAiExplanation = (analysis, userPrefs) => {
+    const allergens = (userPrefs?.allergens || []).map((a) => a.name);
+    const allergenListStr = allergens.length > 0 ? allergens.join(', ') : 'none listed';
+    const modeStr = userPrefs?.strictMode ? 'Strict mode' : 'Standard mode';
+
+    if (analysis.status === 'danger') {
+      const details = analysis.detectedAllergens
+        .filter((d) => !d.isTraceOnly)
+        .map((d) => `${d.name} (${d.hits.slice(0, 3).join(', ')})`)
+        .join(' and ');
+      return `Unsafe for your profile (${allergenListStr} · ${modeStr}). This ingredient label directly contains ${details || 'flagged allergens'}, which you should avoid.`;
+    }
+    if (analysis.status === 'warning') {
+      const details = analysis.detectedAllergens
+        .map((d) => `${d.name} (${d.hits.slice(0, 2).join(', ')})`)
+        .join(' and ');
+      return `Caution advised under ${modeStr}. While not listed as a primary ingredient, this label indicates potential cross-contact or shared-facility traces involving ${details || 'your tracked allergens'}.`;
+    }
+    return `Safe for your profile (${allergenListStr} · ${modeStr}). Neither direct allergens nor hidden chemical derivatives matching your tracked allergies were found in the extracted label text.`;
+  };
+
+  const analyzeLabelWithGemini = async (extractedText, userPrefs, analysis) => {
+    const cleanText = String(extractedText || '').replace(/\s+/g, ' ').trim();
+    if (!cleanText || cleanText.length < 4) {
+      analysis.aiExplanation = 'Could not read enough ingredient text from this image to perform AI analysis.';
+      return analysis;
+    }
+
+    const allergensList = (userPrefs?.allergens || []).map((a) => `${a.name} (${a.severity || 'High'})`).join(', ') || 'none';
+    const modeDesc = userPrefs?.strictMode
+      ? 'Strict Mode is ON (flag hidden chemical/scientific derivatives AND shared-equipment/facility trace warnings).'
+      : 'Standard Mode is ON (only flag direct ingredients and derivatives; ignore facility trace warnings).';
+
+    const prompt = `You are SafePlate AI, a strict food allergy label analyzer.
+The user's active database profile tracks these allergies: ${allergensList}.
+Protection mode: ${modeDesc}
+Here is the Tesseract OCR extracted ingredient label text: "${cleanText}".
+Analyze every ingredient carefully against the user's allergies, including scientific names and chemical derivatives (e.g., arachis hypogaea = peanut, whey/casein/sodium caseinate/lactose = dairy, albumin/globulin/lysozyme = egg, tahini/sesamum = sesame, semolina/spelt/malt = wheat/gluten).
+Reply with EXACTLY one verdict tag at the very start: [SAFE], [CAUTION], or [UNSAFE].
+Followed by a concise, natural 2-sentence explanation of why this product is safe, caution, or unsafe for the user's specific allergies. Do not leave any sentence unfinished.`;
+
+    try {
+      const aiRaw = await callGeminiAPI(
+        [{ role: 'user', parts: [{ text: prompt }] }],
+        userPrefs,
+        null
+      );
+
+      if (aiRaw && typeof aiRaw === 'string') {
+        const upper = aiRaw.toUpperCase();
+        let aiStatus = null;
+        if (upper.includes('[UNSAFE]')) aiStatus = 'danger';
+        else if (upper.includes('[CAUTION]')) aiStatus = 'warning';
+        else if (upper.includes('[SAFE]')) aiStatus = 'safe';
+
+        const cleanedExplanation = aiRaw
+          .replace(/\[(SAFE|CAUTION|UNSAFE)\]/gi, '')
+          .replace(/^\s*[:\-–—]\s*/, '')
+          .trim();
+
+        if (cleanedExplanation) {
+          analysis.aiExplanation = cleanedExplanation;
+        }
+
+        // If Gemini spotted an allergen or trace warning that wasn't caught by the static dictionary, upgrade the verdict
+        if (aiStatus === 'danger' && analysis.status !== 'danger') {
+          analysis.status = 'danger';
+          if (analysis.detectedAllergens.length === 0) {
+            analysis.detectedAllergens.push({
+              name: 'AI-Detected Allergen Risk',
+              severity: 'High',
+              note: 'Flagged by Gemini AI ingredient analysis',
+              hits: ['See Gemini AI analysis above'],
+              isTraceOnly: false
+            });
+          }
+        } else if (aiStatus === 'warning' && analysis.status === 'safe' && userPrefs?.strictMode) {
+          analysis.status = 'warning';
+        }
+        return analysis;
+      }
+    } catch (_) {
+      // Fall back to deterministic explanation below
+    }
+
+    analysis.aiExplanation = buildFallbackLabelAiExplanation(analysis, userPrefs);
+    return analysis;
   };
 
   // --- Render Scan Results ---
@@ -531,6 +626,11 @@
 
     if (resultOcrText) {
       resultOcrText.innerHTML = highlightedHtml || '<em>No readable text detected. Ensure the package is well lit and steady.</em>';
+    }
+
+    if (resultAiSection && resultAiExplanation) {
+      resultAiSection.hidden = false;
+      resultAiExplanation.textContent = analysis.aiExplanation || buildFallbackLabelAiExplanation(analysis, getActiveUserPrefs());
     }
 
     if (status === 'danger') {
@@ -600,9 +700,10 @@
         status: analysis.status,
         timestamp: new Date().toISOString(),
         allergens: (analysis.detectedAllergens || []).map((d) => d.name),
-        summary: analysis.detectedAllergens.length
-          ? analysis.detectedAllergens.map((d) => d.name).join(', ')
-          : 'No allergens detected',
+        summary: analysis.aiExplanation
+          || (analysis.detectedAllergens.length
+            ? analysis.detectedAllergens.map((d) => d.name).join(', ')
+            : 'No allergens detected'),
         extractedText: analysis.rawText || ''
       };
       scans.unshift(record);
