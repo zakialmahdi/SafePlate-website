@@ -781,10 +781,14 @@
   let chatHistory = [];
 
   const getGeminiApiKey = () => {
-    if (typeof window.GEMINI_API_KEY === 'string' && window.GEMINI_API_KEY.trim()) {
+    try {
+      const savedKey = localStorage.getItem('safeplate_gemini_api_key');
+      if (savedKey && savedKey.trim()) return savedKey.trim();
+    } catch (_) {}
+    if (typeof window.GEMINI_API_KEY === 'string' && window.GEMINI_API_KEY.trim() && window.GEMINI_API_KEY !== 'YOUR_GEMINI_API_KEY_HERE') {
       return window.GEMINI_API_KEY.trim();
     }
-    if (typeof GEMINI_API_KEY === 'string' && GEMINI_API_KEY.trim()) {
+    if (typeof GEMINI_API_KEY === 'string' && GEMINI_API_KEY.trim() && GEMINI_API_KEY !== 'YOUR_GEMINI_API_KEY_HERE') {
       return GEMINI_API_KEY.trim();
     }
     return '';

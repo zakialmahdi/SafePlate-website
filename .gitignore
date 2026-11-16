@@ -1,0 +1,4 @@
+# Keep local API keys and environment secrets out of Git
+config.js
+.env
+.env.*
