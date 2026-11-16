@@ -1035,10 +1035,10 @@
     const hasWebSummary = Boolean(scraped?.wikiExtract || scraped?.ddgAbstract);
 
     if (hasScrapedProducts || hasWebSummary) {
-      const lines = [];
       const topicLabel = scraped.topic || q;
+      const summaryText = scraped.wikiExtract || scraped.ddgAbstract || '';
 
-      // Evaluate each scraped product individually so safe vs unsafe products are clearly distinguished
+      // Evaluate each scraped product individually against the user's database allergy profile
       const evaluatedProducts = (scraped.products || []).map((p) => {
         const title = p.brand ? `${p.name} (${p.brand})` : p.name;
         const prodCheckText = `${p.name} ${p.ingredients} ${p.allergens.length ? 'Contains ' + p.allergens.join(', ') : ''} ${p.traces.length ? 'May contain traces of ' + p.traces.join(', ') : ''}`;
@@ -1050,61 +1050,63 @@
       const warningProducts = evaluatedProducts.filter((ep) => ep.analysis.status === 'warning');
       const safeProducts = evaluatedProducts.filter((ep) => ep.analysis.status === 'safe');
 
+      const paragraphs = [];
+
       if (intent === 'recommendation' && evaluatedProducts.length > 0) {
-        lines.push(`🔎 Web Search Results for "${topicLabel}" (Filtered for your profile: ${allergenListStr} · ${modeStr}):`);
         if (safeProducts.length > 0) {
-          lines.push(`✅ Found ${safeProducts.length} matching product(s) with no flagged allergens in their listed ingredients.`);
+          const safeExamples = safeProducts.slice(0, 3).map((ep) => ep.title).join(', ');
+          paragraphs.push(`Based on your allergy profile (${allergenListStr} under ${modeStr}), I checked live product labels for "${topicLabel}" and found options that don't list any of your tracked allergens, such as ${safeExamples}.`);
         } else {
-          lines.push(`⚠️ Note: The top commercial products scraped for "${topicLabel}" contain or may contain your tracked allergens. See breakdown below.`);
+          const flaggedNames = Array.from(new Set(evaluatedProducts.flatMap((ep) => ep.analysis.detectedAllergens.map((d) => d.name)))).join(', ');
+          paragraphs.push(`I searched live product labels for "${topicLabel}", but you should be careful—the top commercial versions I found contain or may contain ${flaggedNames}, which conflicts with your ${allergenListStr} profile.`);
         }
       } else if (evaluatedProducts.length > 0) {
         if (unsafeProducts.length > 0 && safeProducts.length === 0) {
-          const flaggedNames = Array.from(new Set(unsafeProducts.flatMap((ep) => ep.analysis.detectedAllergens.map((d) => d.name)))).join(', ');
-          lines.push(`⚠️ UNSAFE FOR YOUR PROFILE: Live scraped product labels for "${topicLabel}" contain ${flaggedNames} (Tracked in your profile: ${allergenListStr} · ${modeStr}).`);
+          const flaggedDetails = Array.from(new Set(unsafeProducts.flatMap((ep) => ep.analysis.detectedAllergens.map((d) => `${d.name} (${d.hits.slice(0, 2).join(', ')})`)))).join(' and ');
+          paragraphs.push(`No, I wouldn't recommend eating "${topicLabel}" with your current allergy profile (${allergenListStr} · ${modeStr}). When I checked commercial ingredient labels for ${topicLabel}, they contained ${flaggedDetails}.`);
         } else if (unsafeProducts.length > 0 && safeProducts.length > 0) {
-          const flaggedNames = Array.from(new Set(unsafeProducts.flatMap((ep) => ep.analysis.detectedAllergens.map((d) => d.name)))).join(', ');
-          lines.push(`⚠️ DEPENDS ON BRAND / RECIPE: Some "${topicLabel}" products contain ${flaggedNames}, while others appear free of your tracked allergens (${allergenListStr} · ${modeStr}).`);
+          const flaggedNames = Array.from(new Set(unsafeProducts.flatMap((ep) => ep.analysis.detectedAllergens.map((d) => d.name)))).join(' and ');
+          const safeNames = safeProducts.slice(0, 2).map((ep) => ep.title).join(' or ');
+          paragraphs.push(`Whether you can have "${topicLabel}" depends on the specific brand or recipe. Some versions contain ${flaggedNames} (which conflicts with your ${allergenListStr} profile), while others—like ${safeNames}—don't list any of your allergens.`);
         } else if (warningProducts.length > 0) {
-          const traceNames = Array.from(new Set(warningProducts.flatMap((ep) => ep.analysis.detectedAllergens.map((d) => d.name)))).join(', ');
-          lines.push(`⚠️ CAUTION (SHARED EQUIPMENT / TRACE RISK): Scraped labels for "${topicLabel}" list potential trace or cross-contact with ${traceNames} (${allergenListStr} · ${modeStr}).`);
+          const traceNames = Array.from(new Set(warningProducts.flatMap((ep) => ep.analysis.detectedAllergens.map((d) => d.name)))).join(' and ');
+          paragraphs.push(`You should be cautious with "${topicLabel}". While its main ingredients don't directly contain your allergens, product labels indicate possible cross-contact or shared equipment traces of ${traceNames}, which is flagged under your ${modeStr} settings.`);
         } else {
-          lines.push(`✅ SAFE BASED ON SCRAPED LABELS: None of your tracked allergens (${allergenListStr} · ${modeStr}) were flagged in the scraped product labels for "${topicLabel}".`);
+          paragraphs.push(`Yes, "${topicLabel}" generally looks safe for your profile (${allergenListStr} · ${modeStr})! None of the commercial ingredient labels I checked listed any of your tracked allergens or hidden derivatives.`);
         }
       } else if (hasWebSummary) {
-        const wikiAnalysis = analyzeIngredients(`${q} ${scraped.wikiExtract || ''} ${scraped.ddgAbstract || ''}`, userPrefs);
+        const wikiAnalysis = analyzeIngredients(`${q} ${summaryText}`, userPrefs);
         if (wikiAnalysis.status === 'danger') {
-          const flaggedNames = wikiAnalysis.detectedAllergens.map((d) => d.name).join(', ');
-          lines.push(`⚠️ UNSAFE FOR YOUR PROFILE: Web data for "${topicLabel}" mentions ${flaggedNames}, which conflicts with your profile (${allergenListStr} · ${modeStr}).`);
+          const flaggedNames = wikiAnalysis.detectedAllergens.map((d) => `${d.name} (${d.hits.slice(0, 2).join(', ')})`).join(' and ');
+          paragraphs.push(`I'd advise avoiding "${topicLabel}" based on your profile (${allergenListStr} · ${modeStr}), as it typically involves ${flaggedNames}.`);
         } else {
-          lines.push(`✅ OVERVIEW FOR "${topicLabel.toUpperCase()}" (Profile: ${allergenListStr} · ${modeStr}):`);
+          paragraphs.push(`Based on your profile (${allergenListStr} · ${modeStr}), "${topicLabel}" doesn't typically contain your tracked allergens, though it's always smart to double-check the package label.`);
         }
       }
 
-      if (hasWebSummary) {
-        const summaryText = scraped.wikiExtract || scraped.ddgAbstract;
-        const sourceTitle = scraped.wikiTitle ? `Wikipedia (${scraped.wikiTitle})` : 'Web Knowledge Base';
-        lines.push(`\n🌐 Web Overview (${sourceTitle}):\n${summaryText}`);
+      if (summaryText) {
+        paragraphs.push(summaryText);
       }
 
       if (evaluatedProducts.length > 0) {
-        lines.push(`\n📦 Live Scraped Product Labels (OpenFoodFacts):`);
-        evaluatedProducts.forEach(({ product: p, title, analysis: prodAnalysis }) => {
-          let badge = '✅ Safe for profile';
-          if (prodAnalysis.status === 'danger') {
-            const hits = prodAnalysis.detectedAllergens.map((d) => `${d.name} (${d.hits.slice(0, 3).join(', ')})`).join('; ');
-            badge = `❌ Unsafe — Flagged: ${hits}`;
-          } else if (prodAnalysis.status === 'warning') {
-            const hits = prodAnalysis.detectedAllergens.map((d) => d.name).join(', ');
-            badge = `⚠️ Caution — Trace warning: ${hits}`;
-          }
+        const productNotes = evaluatedProducts.slice(0, 3).map(({ product: p, title, analysis: prodAnalysis }) => {
           const shortIng = p.ingredients
-            ? (p.ingredients.length > 180 ? `${p.ingredients.slice(0, 180)}…` : p.ingredients)
+            ? (p.ingredients.length > 140 ? `${p.ingredients.slice(0, 140)}…` : p.ingredients)
             : (p.allergens.length ? `Allergens: ${p.allergens.join(', ')}` : 'Ingredients not listed');
-          lines.push(`• ${title}: ${badge}\n  Ingredients: ${shortIng}`);
+          if (prodAnalysis.status === 'danger') {
+            const hits = prodAnalysis.detectedAllergens.map((d) => `${d.name}: ${d.hits.slice(0, 2).join(', ')}`).join('; ');
+            return `• ${title} — Unsafe for you (contains ${hits}). Ingredients: ${shortIng}`;
+          }
+          if (prodAnalysis.status === 'warning') {
+            const hits = prodAnalysis.detectedAllergens.map((d) => d.name).join(', ');
+            return `• ${title} — Caution (may contain traces of ${hits}). Ingredients: ${shortIng}`;
+          }
+          return `• ${title} — Appears safe for your profile. Ingredients: ${shortIng}`;
         });
+        paragraphs.push(`Here are a few real product labels I checked online:\n${productNotes.join('\n')}`);
       }
 
-      return lines.join('\n');
+      return paragraphs.join('\n\n');
     }
 
     // Fallback if offline or no web results matched
@@ -1135,10 +1137,10 @@
     const analysis = analyzeIngredients(q, userPrefs);
     if (analysis.detectedAllergens.length > 0) {
       const names = analysis.detectedAllergens.map((d) => d.name).join(', ');
-      return `⚠️ Caution: "${ scraped?.topic || q }" is associated with ${names}, which is flagged in your active profile (${allergenListStr} · ${modeStr}). Please avoid products containing ${names} or its derivatives.`;
+      return `I'd recommend avoiding that—your question mentions terms linked to ${names}, which is flagged in your active profile (${allergenListStr} · ${modeStr}).`;
     }
 
-    return `I checked "${scraped?.topic || q}" against your active SafePlate profile (${allergenListStr} · ${modeStr}) and couldn't find a matching commercial food label online. Try asking with a specific food brand, dish name, or ingredient (for example: "Can I eat Oreo?", "What is soy lecithin?", or "What can I substitute for milk?").`;
+    return `I'm here to help you figure out what's safe to eat with your ${allergenListStr} profile (${modeStr}). Could you tell me the specific food, dish, brand, or ingredient you're wondering about? For example, you can ask "Can I eat Nutella?", "Is there dairy in pesto?", or "What can I substitute for butter?"`;
   };
 
   const callGeminiAPI = async (historyArray, userPrefs, scrapedData) => {
@@ -1149,14 +1151,14 @@
     const traceLabel = userPrefs?.traceAlerts ? 'shared-equipment trace alerts enabled' : 'shared-equipment trace alerts disabled';
     const webContextText = formatScrapedWebContextForPrompt(scrapedData);
 
-    const systemInstructionText = `You are SafePlate AI, a helpful and knowledgeable food allergy and nutrition assistant. The user's active database profile tracks these allergies: ${allergens}. Protection settings: ${modeLabel}, ${traceLabel}. Answer the user's question directly, conversationally, and accurately. If live scraped product or Wikipedia data is provided, reference the real ingredients and explain clearly whether the food is safe, caution, or unsafe for their specific profile. Always finish your sentences completely.`;
+    const systemInstructionText = `You are SafePlate AI, a friendly, natural, conversational food allergy and nutrition assistant. The user's active database profile tracks these allergies: ${allergens}. Protection settings: ${modeLabel}, ${traceLabel}. Speak naturally like a helpful human nutritionist in 1 to 3 short paragraphs—do not output robotic database headers. If live scraped product or Wikipedia data is provided, naturally weave the real ingredient findings into your answer and clearly tell the user whether the food is safe, caution, or unsafe for their specific profile. Always finish your sentences completely.`;
 
     const clonedHistory = historyArray.map((item, idx) => {
       if (idx === historyArray.length - 1 && item.role === 'user' && webContextText) {
         return {
           role: 'user',
           parts: [{
-            text: `User question: ${item.parts[0].text}\n\n[Live Web & OpenFoodFacts Scraped Data for "${scrapedData?.topic || ''}":\n${webContextText}\nUse this scraped ingredient data (and your food safety knowledge) to directly answer the user's question tailored to their allergies (${allergens}).]`
+            text: `User question: ${item.parts[0].text}\n\n[Background Reference Data from OpenFoodFacts & Wikipedia for "${scrapedData?.topic || ''}":\n${webContextText}\nReply conversationally in natural paragraphs tailored to the user's allergies (${allergens}), referencing the real ingredients found.]`
           }]
         };
       }
@@ -1171,7 +1173,7 @@
         },
         {
           role: 'model',
-          parts: [{ text: 'Understood. I will answer the user question directly using the scraped ingredient data and their allergy profile.' }]
+          parts: [{ text: 'Understood. I will reply naturally and conversationally using the real ingredient data and the user allergy profile.' }]
         },
         ...clonedHistory
       ];
@@ -1182,7 +1184,7 @@
 
       // Support both Google AI Studio keys (AIza...) and Vertex AI Express keys (AQ....)
       const isVertexKey = apiKey.startsWith('AQ.');
-      const modelsToTry = ['gemini-3.5-flash-lite', 'gemini-2.5-flash'];
+      const modelsToTry = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-3.5-flash-lite'];
       const endpoints = [];
       for (const m of modelsToTry) {
         if (isVertexKey) {
@@ -1198,9 +1200,9 @@
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               contents: apiContents,
-              generationConfig: { maxOutputTokens: 2048, temperature: 0.4 }
+              generationConfig: { maxOutputTokens: 2048, temperature: 0.5 }
             })
-          }, 6500);
+          }, 5500);
 
           const data = await response.json();
           const text = data?.candidates?.[0]?.content?.parts?.map((pt) => pt.text || '').join('').trim();
@@ -1213,7 +1215,24 @@
       }
     }
 
-    // Keyless conversational LLM fallback (Pollinations OpenAI-compatible endpoint) grounded with our live scraped data
+    // Keyless conversational LLM fallback (supports both JSON and plain-text responses from Pollinations)
+    const parsePollinationsResponse = async (res) => {
+      if (!res || !res.ok) return '';
+      const rawText = (await res.text()).trim();
+      if (!rawText) return '';
+      if (rawText.startsWith('{')) {
+        try {
+          const parsed = JSON.parse(rawText);
+          const content = parsed?.choices?.[0]?.message?.content || parsed?.response || parsed?.text || '';
+          if (content) return String(content).trim();
+        } catch (_) {
+          // Not JSON, return as plain text if valid
+        }
+      }
+      if (/^<!DOCTYPE html>|^<html/i.test(rawText)) return '';
+      return rawText;
+    };
+
     try {
       const openAiMessages = [
         { role: 'system', content: systemInstructionText },
@@ -1222,24 +1241,25 @@
           content: m.parts?.[0]?.text || ''
         }))
       ];
-      const llmRes = await fetchWithTimeout('https://text.pollinations.ai/openai', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: 'openai',
-          messages: openAiMessages,
-          temperature: 0.4
-        })
-      }, 7500);
-      if (llmRes.ok) {
-        const llmData = await llmRes.json();
-        const reply = llmData?.choices?.[0]?.message?.content?.trim();
-        if (reply) {
-          return reply;
+      for (const url of ['https://text.pollinations.ai/openai', 'https://text.pollinations.ai/']) {
+        try {
+          const llmRes = await fetchWithTimeout(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              model: 'openai',
+              messages: openAiMessages,
+              temperature: 0.5
+            })
+          }, 7000);
+          const reply = await parsePollinationsResponse(llmRes);
+          if (reply) return reply;
+        } catch (_) {
+          // Try next URL
         }
       }
     } catch (_) {
-      // Fall back to structured scraped answer below
+      // Fall back to conversational scraped answer below
     }
 
     return buildScrapedAllergyAnswer(lastQuestion, userPrefs, scrapedData);
